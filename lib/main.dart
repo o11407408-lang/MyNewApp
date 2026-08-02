@@ -1,12 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'dart:io';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const MySavingsApp());
 }
 
-class MySavingsApp extends StatelessWidget {
+class MySavingsApp extends StatefulWidget {
   const MySavingsApp({super.key});
+
+  static _MySavingsAppState? of(BuildContext context) =>
+      context.findAncestorStateOfType<_MySavingsAppState>();
+
+  @override
+  State<MySavingsApp> createState() => _MySavingsAppState();
+}
+
+class _MySavingsAppState extends State<MySavingsApp> {
+  Color primarySeedColor = Colors.deepPurple;
+
+  void updateThemeColor(Color color) {
+    setState(() {
+      primarySeedColor = color;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -14,7 +32,10 @@ class MySavingsApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        colorSchemeSeed: Colors.deepPurple,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: primarySeedColor,
+          brightness: Brightness.light,
+        ),
       ),
       home: const MainNavigationScreen(),
     );
@@ -25,13 +46,13 @@ class GoalModel {
   String title;
   double targetAmount;
   double savedAmount;
-  String imageUrl;
+  String imagePath;
 
   GoalModel({
     required this.title,
     required this.targetAmount,
     required this.savedAmount,
-    required this.imageUrl,
+    required this.imagePath,
   });
 }
 
@@ -52,41 +73,55 @@ class MainNavigationScreen extends StatefulWidget {
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   bool showWelcomeScreen = true;
   String userName = "";
-  final TextEditingController _welcomeNameController = TextEditingController();
+  String userLastName = "";
 
-  Color backgroundColor = const Color(0xFFF7F2FA);
+  final TextEditingController _welcomeNameController = TextEditingController();
+  final TextEditingController _welcomeLastNameController = TextEditingController();
+
+  Color currentColorSeed = Colors.deepPurple;
 
   final List<Color> _availableColors = const [
-    Color(0xFFF7F2FA),
-    Color(0xFFE8F5E9),
-    Color(0xFFE3F2FD),
-    Color(0xFFFFF3E0),
-    Color(0xFFFCE4EC),
+    Colors.deepPurple,
+    Colors.redAccent,
+    Colors.blueAccent,
+    Colors.teal,
+    Colors.orangeAccent,
+    Colors.pinkAccent,
   ];
 
   final PageController _pageController = PageController();
   int _currentGoalIndex = 0;
 
-  final List<GoalModel> _goals = [
-    GoalModel(
-      title: "Моя первая мечта",
-      targetAmount: 50000,
-      savedAmount: 0,
-      imageUrl: "",
-    ),
-    GoalModel(
-      title: "Вторая цель",
-      targetAmount: 100000,
-      savedAmount: 15000,
-      imageUrl: "",
-    ),
-  ];
-
+  late List<GoalModel> _goals;
   final List<LeaderboardItem> _leaderboard = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _resetGoals();
+  }
+
+  void _resetGoals() {
+    _goals = [
+      GoalModel(
+        title: "Моя первая мечта",
+        targetAmount: 50000,
+        savedAmount: 0,
+        imagePath: "",
+      ),
+      GoalModel(
+        title: "Вторая цель",
+        targetAmount: 100000,
+        savedAmount: 0,
+        imagePath: "",
+      ),
+    ];
+  }
 
   @override
   void dispose() {
     _welcomeNameController.dispose();
+    _welcomeLastNameController.dispose();
     _pageController.dispose();
     super.dispose();
   }
@@ -99,10 +134,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     return _buildHomeScreen(context);
   }
 
-  // 1. Приветственный экран
   Widget _buildWelcomeScreen(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
-      backgroundColor: backgroundColor,
+      backgroundColor: theme.colorScheme.surface,
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -122,13 +157,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                         width: 70,
                         height: 70,
                         decoration: BoxDecoration(
-                          color: Colors.deepPurple.shade100,
+                          color: theme.colorScheme.primaryContainer,
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.savings_outlined,
                           size: 36,
-                          color: Colors.deepPurple,
+                          color: theme.colorScheme.primary,
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -147,13 +182,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 13,
-                          color: Colors.grey.shade700,
+                          color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
                       const SizedBox(height: 16),
                       Card(
                         elevation: 0,
-                        color: Colors.white,
+                        color: theme.colorScheme.surfaceContainerLow,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(20),
                         ),
@@ -161,13 +196,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                           padding: const EdgeInsets.all(16.0),
                           child: Column(
                             children: [
-                              _buildFeatureRow(Icons.person_outline, "Персонализация", "Указывай своё имя для удобства."),
+                              _buildFeatureRow(context, Icons.person_outline, "Персонализация", "Указывай своё имя для удобства."),
                               const Divider(height: 16),
-                              _buildFeatureRow(Icons.photo_size_select_actual_outlined, "Визуализация мечты", "Добавляй фото целей и следи за прогрессом."),
+                              _buildFeatureRow(context, Icons.photo_size_select_actual_outlined, "Визуализация мечты", "Добавляй фото целей из галереи."),
                               const Divider(height: 16),
-                              _buildFeatureRow(Icons.palette_outlined, "Дизайн и темы", "Меняй цвета фона под своё настроение."),
+                              _buildFeatureRow(context, Icons.palette_outlined, "Дизайн и темы", "Material You палитра под настроение."),
                               const Divider(height: 16),
-                              _buildFeatureRow(Icons.all_inclusive, "Без подписок", "Весь функционал абсолютно бесплатен."),
+                              _buildFeatureRow(context, Icons.all_inclusive, "Без подписок", "Весь функционал абсолютно бесплатен."),
                             ],
                           ),
                         ),
@@ -175,7 +210,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                       const SizedBox(height: 16),
                       Card(
                         elevation: 0,
-                        color: Colors.white,
+                        color: theme.colorScheme.surfaceContainerLow,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(20),
                         ),
@@ -200,6 +235,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                                   contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                                 ),
                               ),
+                              const SizedBox(height: 10),
+                              TextField(
+                                controller: _welcomeLastNameController,
+                                decoration: InputDecoration(
+                                  labelText: "Фамилия (необязательно)",
+                                  hintText: "Введите вашу фамилию",
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                ),
+                              ),
                               const SizedBox(height: 14),
                               const Text(
                                 "Выберите цвет темы",
@@ -209,15 +256,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                                 children: _availableColors.map((color) {
-                                  bool isSelected = backgroundColor == color;
+                                  bool isSelected = currentColorSeed == color;
                                   return GestureDetector(
-                                    onTap: () => setState(() => backgroundColor = color),
+                                    onTap: () {
+                                      setState(() => currentColorSeed = color);
+                                      MySavingsApp.of(context)?.updateThemeColor(color);
+                                    },
                                     child: Container(
                                       decoration: BoxDecoration(
                                         shape: BoxShape.circle,
                                         border: Border.all(
-                                          color: isSelected ? Colors.deepPurple : Colors.black26,
-                                          width: isSelected ? 3.0 : 1.5,
+                                          color: isSelected ? theme.colorScheme.primary : Colors.transparent,
+                                          width: 3.0,
                                         ),
                                       ),
                                       child: CircleAvatar(backgroundColor: color, radius: 18),
@@ -244,6 +294,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                             }
                             setState(() {
                               userName = enteredName;
+                              userLastName = _welcomeLastNameController.text.trim();
                               showWelcomeScreen = false;
                             });
                           },
@@ -270,17 +321,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  Widget _buildFeatureRow(IconData icon, String title, String subtitle) {
+  Widget _buildFeatureRow(BuildContext context, IconData icon, String title, String subtitle) {
+    final theme = Theme.of(context);
     return Row(
       children: [
-        Icon(icon, color: Colors.deepPurple, size: 24),
+        Icon(icon, color: theme.colorScheme.primary, size: 24),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-              Text(subtitle, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+              Text(subtitle, style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant)),
             ],
           ),
         ),
@@ -288,18 +340,22 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  // 2. Главный экран
   Widget _buildHomeScreen(BuildContext context) {
+    final theme = Theme.of(context);
     final screenHeight = MediaQuery.of(context).size.height;
 
+    String greeting = userLastName.isNotEmpty
+        ? "Здравствуйте, $userName $userLastName!"
+        : "Здравствуйте, $userName!";
+
     return Scaffold(
-      backgroundColor: backgroundColor,
+      backgroundColor: theme.colorScheme.surface,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: Text(
-          userName,
-          style: const TextStyle(fontWeight: FontWeight.bold),
+          greeting,
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
         ),
         actions: [
           IconButton(
@@ -337,7 +393,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
                             return Card(
                               elevation: 0,
-                              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                              color: theme.colorScheme.surfaceContainerHighest,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(24),
                               ),
@@ -347,32 +403,32 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                                 child: Column(
                                   children: [
                                     GestureDetector(
-                                      onTap: () => _editGoal(index),
+                                      onTap: () => _pickImageForGoal(index),
                                       child: ClipRRect(
                                         borderRadius: BorderRadius.circular(16),
-                                        child: goal.imageUrl.isNotEmpty
-                                            ? Image.network(
-                                                goal.imageUrl,
+                                        child: goal.imagePath.isNotEmpty
+                                            ? Image.file(
+                                                File(goal.imagePath),
                                                 height: screenHeight > 700 ? 150 : 110,
                                                 width: double.infinity,
                                                 fit: BoxFit.cover,
-                                                errorBuilder: (context, error, stackTrace) => _buildImagePlaceholder(screenHeight),
+                                                errorBuilder: (context, error, stackTrace) => _buildImagePlaceholder(context, screenHeight),
                                               )
-                                            : _buildImagePlaceholder(screenHeight),
+                                            : _buildImagePlaceholder(context, screenHeight),
                                       ),
                                     ),
                                     const SizedBox(height: 10),
                                     Text(
                                       goal.title,
-                                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                      style: theme.textTheme.titleMedium?.copyWith(
                                             fontWeight: FontWeight.bold,
                                           ),
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
                                       "${goal.savedAmount.toInt()} / ${goal.targetAmount.toInt()} ₽",
-                                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                            color: Theme.of(context).colorScheme.primary,
+                                      style: theme.textTheme.bodyMedium?.copyWith(
+                                            color: theme.colorScheme.primary,
                                             fontWeight: FontWeight.w600,
                                           ),
                                     ),
@@ -385,7 +441,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                                     const SizedBox(height: 4),
                                     Text(
                                       "Собрано ${(goalProgress * 100).toStringAsFixed(1)}% (Цель ${index + 1} из 2)",
-                                      style: Theme.of(context).textTheme.bodySmall,
+                                      style: theme.textTheme.bodySmall,
                                     ),
                                   ],
                                 ),
@@ -404,7 +460,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                             margin: const EdgeInsets.symmetric(horizontal: 3),
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: _currentGoalIndex == index ? Colors.deepPurple : Colors.black26,
+                              color: _currentGoalIndex == index ? theme.colorScheme.primary : theme.colorScheme.outlineVariant,
                             ),
                           );
                         }),
@@ -436,7 +492,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                       const SizedBox(height: 16),
                       Card(
                         elevation: 0,
-                        color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.4),
+                        color: theme.colorScheme.primaryContainer.withOpacity(0.5),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(20),
                         ),
@@ -468,7 +524,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                       const SizedBox(height: 12),
                       Card(
                         elevation: 0,
-                        color: Theme.of(context).colorScheme.secondaryContainer.withOpacity(0.4),
+                        color: theme.colorScheme.secondaryContainer.withOpacity(0.5),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(20),
                         ),
@@ -476,7 +532,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                           padding: const EdgeInsets.all(16.0),
                           child: Column(
                             children: [
-                              const Icon(Icons.send_rounded, color: Colors.blueAccent, size: 28),
+                              Icon(Icons.send_rounded, color: theme.colorScheme.primary, size: 28),
                               const SizedBox(height: 6),
                               const Text(
                                 "Наш телеграм канал",
@@ -509,20 +565,21 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
-  Widget _buildImagePlaceholder(double screenHeight) {
+  Widget _buildImagePlaceholder(BuildContext context, double screenHeight) {
+    final theme = Theme.of(context);
     return Container(
       height: screenHeight > 700 ? 150 : 110,
       width: double.infinity,
-      color: Colors.deepPurple.shade50,
+      color: theme.colorScheme.primaryContainer.withOpacity(0.3),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.add_a_photo_outlined, size: 36, color: Colors.deepPurple.shade300),
+          Icon(Icons.add_a_photo_outlined, size: 36, color: theme.colorScheme.primary),
           const SizedBox(height: 4),
           Text(
-            "Нажмите, чтобы добавить фото",
+            "Нажмите, чтобы выбрать фото из галереи",
             style: TextStyle(
-              color: Colors.deepPurple.shade400,
+              color: theme.colorScheme.primary,
               fontWeight: FontWeight.w600,
               fontSize: 11,
             ),
@@ -530,6 +587,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _pickImageForGoal(int goalIndex) async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.image);
+    if (result != null && result.files.single.path != null) {
+      setState(() {
+        _goals[goalIndex].imagePath = result.files.single.path!;
+      });
+    }
   }
 
   void _addMoney(int goalIndex) {
@@ -564,7 +630,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     GoalModel goal = _goals[goalIndex];
     TextEditingController titleController = TextEditingController(text: goal.title);
     TextEditingController targetController = TextEditingController(text: goal.targetAmount.toString());
-    TextEditingController imageController = TextEditingController(text: goal.imageUrl);
 
     showDialog(
       context: context,
@@ -576,7 +641,15 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             children: [
               TextField(controller: titleController, decoration: const InputDecoration(labelText: "Название мечты")),
               TextField(controller: targetController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Целевая сумма")),
-              TextField(controller: imageController, decoration: const InputDecoration(labelText: "Ссылка на фото")),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await _pickImageForGoal(goalIndex);
+                  if (context.mounted) Navigator.pop(context);
+                },
+                icon: const Icon(Icons.photo_library),
+                label: const Text("Выбрать новое фото из галереи"),
+              ),
             ],
           ),
         ),
@@ -587,7 +660,6 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               setState(() {
                 goal.title = titleController.text;
                 goal.targetAmount = double.tryParse(targetController.text) ?? goal.targetAmount;
-                goal.imageUrl = imageController.text;
               });
               Navigator.pop(context);
             },
@@ -599,6 +671,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   void _showSettingsBottomSheet() {
+    final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -615,9 +688,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             ),
             const SizedBox(height: 20),
             ListTile(
-              leading: const Icon(Icons.person, color: Colors.deepPurple),
-              title: const Text("Изменить имя"),
-              subtitle: Text(userName),
+              leading: Icon(Icons.person, color: theme.colorScheme.primary),
+              title: const Text("Изменить имя и фамилию"),
+              subtitle: Text(userLastName.isNotEmpty ? "$userName $userLastName" : userName),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Navigator.pop(context);
@@ -626,9 +699,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             ),
             const Divider(),
             ListTile(
-              leading: const Icon(Icons.palette, color: Colors.deepPurple),
-              title: const Text("Цвет фона темы"),
-              subtitle: const Text("Нажмите для выбора"),
+              leading: Icon(Icons.palette, color: theme.colorScheme.primary),
+              title: const Text("Цвет темы (Material You)"),
+              subtitle: const Text("Выбрать яркую палитру"),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Navigator.pop(context);
@@ -637,13 +710,24 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             ),
             const Divider(),
             ListTile(
-              leading: const Icon(Icons.leaderboard, color: Colors.deepPurple),
+              leading: Icon(Icons.leaderboard, color: theme.colorScheme.primary),
               title: const Text("Таблица лидеров"),
               subtitle: const Text("Рейтинг спонсоров проекта"),
               trailing: const Icon(Icons.chevron_right),
               onTap: () {
                 Navigator.pop(context);
                 _showLeaderboardDialog();
+              },
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.refresh, color: Colors.redAccent),
+              title: const Text("Сбросить все настройки", style: TextStyle(color: Colors.redAccent)),
+              subtitle: const Text("Стереть данные и вернуть исходный вид"),
+              trailing: const Icon(Icons.chevron_right, color: Colors.redAccent),
+              onTap: () {
+                Navigator.pop(context);
+                _resetAllData();
               },
             ),
             const SizedBox(height: 20),
@@ -653,16 +737,55 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     );
   }
 
+  void _resetAllData() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Сброс данных"),
+        content: const Text("Вы уверены, что хотите сбросить все накопления, имя и настройки темы?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Отмена")),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () {
+              setState(() {
+                _resetGoals();
+                userName = "";
+                userLastName = "";
+                showWelcomeScreen = true;
+                currentColorSeed = Colors.deepPurple;
+                MySavingsApp.of(context)?.updateThemeColor(Colors.deepPurple);
+              });
+              Navigator.pop(context);
+            },
+            child: const Text("Сбросить"),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _editProfile() {
     TextEditingController nameController = TextEditingController(text: userName);
+    TextEditingController lastNameController = TextEditingController(text: userLastName);
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text("Изменить имя"),
-        content: TextField(
-          controller: nameController,
-          decoration: const InputDecoration(labelText: "Ваше имя"),
+        title: const Text("Изменить профиль"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(labelText: "Ваше имя *"),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: lastNameController,
+              decoration: const InputDecoration(labelText: "Фамилия (необязательно)"),
+            ),
+          ],
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text("Отмена")),
@@ -671,6 +794,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               if (nameController.text.trim().isNotEmpty) {
                 setState(() {
                   userName = nameController.text.trim();
+                  userLastName = lastNameController.text.trim();
                 });
               }
               Navigator.pop(context);
@@ -683,33 +807,35 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   void _showColorPicker() {
+    final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
       builder: (context) => Container(
-        height: 150,
+        height: 160,
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            const Text("Выберите цвет фона", style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text("Выберите яркий акцент темы", style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: _availableColors.map((color) {
-                bool isSelected = backgroundColor == color;
+                bool isSelected = currentColorSeed == color;
                 return GestureDetector(
                   onTap: () {
-                    setState(() => backgroundColor = color);
+                    setState(() => currentColorSeed = color);
+                    MySavingsApp.of(context)?.updateThemeColor(color);
                     Navigator.pop(context);
                   },
                   child: Container(
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: isSelected ? Colors.deepPurple : Colors.black26,
-                        width: isSelected ? 3.0 : 1.5,
+                        color: isSelected ? theme.colorScheme.primary : Colors.transparent,
+                        width: 3.0,
                       ),
                     ),
-                    child: CircleAvatar(backgroundColor: color, radius: 22),
+                    child: CircleAvatar(backgroundColor: color, radius: 20),
                   ),
                 );
               }).toList(),
@@ -748,11 +874,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                     final item = _leaderboard[index];
                     return ListTile(
                       leading: CircleAvatar(
-                        backgroundColor: Colors.deepPurple.shade100,
-                        child: Text(
-                          "${index + 1}",
-                          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.deepPurple),
-                        ),
+                        child: Text("${index + 1}"),
                       ),
                       title: Text(item.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                       trailing: Text("${item.amount.toInt()} ₽", style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -768,75 +890,14 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   }
 
   void _showDonateDialog() {
-    TextEditingController amountController = TextEditingController();
-    TextEditingController nameController = TextEditingController(text: userName);
-    bool isAnonymous = false;
-
     showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setStateDialog) => AlertDialog(
-          title: const Text("Поддержать проект"),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: amountController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: "Сумма доната (₽)"),
-                ),
-                const SizedBox(height: 12),
-                SwitchListTile(
-                  title: const Text("Анонимный подарок", style: TextStyle(fontSize: 14)),
-                  subtitle: const Text("Не отображать в таблице лидеров", style: TextStyle(fontSize: 11)),
-                  value: isAnonymous,
-                  onChanged: (val) {
-                    setStateDialog(() {
-                      isAnonymous = val;
-                    });
-                  },
-                ),
-                if (!isAnonymous) ...[
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(labelText: "Имя для таблицы лидеров"),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text("Отмена")),
-            FilledButton(
-              onPressed: () {
-                double? amount = double.tryParse(amountController.text);
-                if (amount != null && amount > 0) {
-                  if (!isAnonymous) {
-                    String donorName = nameController.text.trim().isNotEmpty ? nameController.text.trim() : "Аноним";
-                    setState(() {
-                      int existingIndex = _leaderboard.indexWhere((element) => element.name == donorName);
-                      if (existingIndex >= 0) {
-                        _leaderboard[existingIndex] = LeaderboardItem(
-                          name: donorName,
-                          amount: _leaderboard[existingIndex].amount + amount,
-                        );
-                      } else {
-                        _leaderboard.add(LeaderboardItem(name: donorName, amount: amount));
-                      }
-                    });
-                  }
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Спасибо за вашу поддержку!")),
-                  );
-                }
-              },
-              child: const Text("Отправить"),
-            ),
-          ],
-        ),
+      builder: (context) => AlertDialog(
+        title: const Text("Скоро откроется!"),
+        content: const Text("Реквизиты для приема донатов временно подготавливаются. Совсем скоро функция станет доступна!"),
+        actions: [
+          FilledButton(onPressed: () => Navigator.pop(context), child: const Text("Понятно")),
+        ],
       ),
     );
   }
