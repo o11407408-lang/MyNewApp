@@ -21,6 +21,9 @@ jobs:
         with:
           channel: 'stable'
 
+      - name: create android project files
+        run: flutter create . --platforms android
+
       - name: build apk
         run: flutter build apk --release
 
