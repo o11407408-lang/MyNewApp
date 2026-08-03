@@ -725,7 +725,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 16),
               
-              // Адаптивная карточка цели под размеры картинки через PageView
+              // карточка цели с размерами под картинку через PageView
               SizedBox(
                 child: PageView.builder(
                   controller: _pageController,
@@ -923,7 +923,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// Экран настроек с пасхалкой (5 тапов на версию приложения)
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -1033,7 +1032,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: const Text('Темная тема'),
             value: appState.isDark,
             onChanged: (val) {
-              appState.toggleTheme();
+              appState.toggleTheme(val);
             },
           ),
           const Divider(),
