@@ -1,24 +1,53 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 
-void main() {
-  runApp(const MyApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final prefs = await SharedPreferences.getInstance();
+  final isRegistered = prefs.getBool('is_registered') ?? false;
+  final savedName = prefs.getString('user_name') ?? '';
+  final isDark = prefs.getBool('is_dark') ?? false;
+  final colorIndex = prefs.getInt('color_index') ?? 0;
+
+  runApp(MyApp(
+    isRegistered: isRegistered,
+    savedName: savedName,
+    initialIsDark: isDark,
+    initialColorIndex: colorIndex,
+  ));
 }
 
 class MyApp extends StatefulWidget {
-  const MyApp({super.key});
+  final bool isRegistered;
+  final String savedName;
+  final bool initialIsDark;
+  final int initialColorIndex;
+
+  const MyApp({
+    super.key,
+    required this.isRegistered,
+    required this.savedName,
+    required this.initialIsDark,
+    required this.initialColorIndex,
+  });
+
+  static _MyAppState? of(BuildContext context) =>
+      context.findAncestorStateOfType<_MyAppState>();
 
   @override
   State<MyApp> createState() => _MyAppState();
 }
 
 class _MyAppState extends State<MyApp> {
-  bool isDarkMode = false;
-  Color primaryColor = Colors.red;
+  late bool isDark;
+  late int selectedColorIndex;
+  late String userName;
+  late bool isRegistered;
 
-  // 7. цвета темы по порядку радуги (красный, оранжевый, зеленый, голубой, синий, фиолетовый)
-  final List<Color> rainbowColors = [
+  // 6 & 7. Палитра по цветам радуги (Красный, Оранжевый, Зеленый, Голубой, Синий, Фиолетовый)
+  final List<Color> lightColors = [
     Colors.red,
     Colors.orange,
     Colors.green,
@@ -27,161 +56,297 @@ class _MyAppState extends State<MyApp> {
     Colors.purple,
   ];
 
-  void changeTheme(Color color) {
+  final List<Color> darkColors = [
+    const Color(0xFFE57373),
+    const Color(0xFFFFB74D),
+    const Color(0xFF81C784),
+    const Color(0xFF4FC3F7),
+    const Color(0xFF64B5F6),
+    const Color(0xFFBA68C8),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    isDark = widget.initialIsDark;
+    selectedColorIndex = widget.initialColorIndex;
+    userName = widget.savedName;
+    isRegistered = widget.isRegistered;
+  }
+
+  Color get primaryColor =>
+      isDark ? darkColors[selectedColorIndex] : lightColors[selectedColorIndex];
+
+  void toggleTheme(bool value) {
     setState(() {
-      primaryColor = color;
+      isDark = value;
+    });
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setBool('is_dark', isDark);
     });
   }
 
-  void toggleDarkMode(bool val) {
+  void setColor(int index) {
     setState(() {
-      isDarkMode = val;
+      selectedColorIndex = index;
+    });
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setInt('color_index', index);
+    });
+  }
+
+  void registerUser(String name) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_name', name);
+    await prefs.setBool('is_registered', true);
+    setState(() {
+      userName = name;
+      isRegistered = true;
+    });
+  }
+
+  void resetAllData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    setState(() {
+      isRegistered = false;
+      userName = '';
+      isDark = false;
+      selectedColorIndex = 0;
     });
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
       title: 'Я коплю',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        brightness: isDarkMode ? Brightness.dark : Brightness.light,
-        primaryColor: primaryColor,
-        scaffoldBackgroundColor: isDarkMode ? const Color(0xFF121212) : const Color(0xFFF8F9FA),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: primaryColor,
-          brightness: isDarkMode ? Brightness.dark : Brightness.light,
-          primary: primaryColor,
-        ),
+        brightness: isDark ? Brightness.dark : Brightness.light,
+        scaffoldBackgroundColor: isDark ? const Color(0xFF121212) : const Color(0xFFFBF8FF),
+        colorSchemeSeed: primaryColor,
         useMaterial3: true,
       ),
-      home: RegistrationScreen(
-        rainbowColors: rainbowColors,
-        onComplete: (name, color) {
-          setState(() {
-            primaryColor = color;
-          });
-        },
-      ),
+      home: isRegistered
+          ? HomeScreen(userName: userName)
+          : const OnboardingScreen(),
     );
   }
 }
 
-// 6 & 12. экран регистрации
-class RegistrationScreen extends StatefulWidget {
-  final List<Color> rainbowColors;
-  final Function(String, Color) onComplete;
-
-  const RegistrationScreen({
-    super.key,
-    required this.rainbowColors,
-    required this.onComplete,
-  });
-
-  @override
-  State<RegistrationScreen> createState() => _RegistrationScreenState();
+Route createAnimatedRoute(Widget page) {
+  return PageRouteBuilder(
+    pageBuilder: (context, animation, secondaryAnimation) => page,
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      return FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeInOut),
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.96, end: 1.0).animate(
+            CurvedAnimation(parent: animation, curve: Curves.easeInOut),
+          ),
+          child: child,
+        ),
+      );
+    },
+    transitionDuration: const Duration(milliseconds: 300),
+  );
 }
 
-class _RegistrationScreenState extends State<RegistrationScreen> {
-  final TextEditingController _nameController = TextEditingController();
-  late Color selectedColor;
+class OnboardingScreen extends StatefulWidget {
+  const OnboardingScreen({super.key});
 
   @override
-  void initState() {
-    super.initState();
-    // 6. изначально тема красная
-    selectedColor = widget.rainbowColors[0];
-  }
+  State<OnboardingScreen> createState() => _OnboardingScreenState();
+}
+
+class _OnboardingScreenState extends State<OnboardingScreen> {
+  final _nameController = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
+    final appState = MyApp.of(context)!;
+    final isDark = appState.isDark;
+
+    return Scaffold(
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              CircleAvatar(
+                radius: 35,
+                backgroundColor: appState.primaryColor.withOpacity(0.15),
+                child: Icon(Icons.savings_outlined, size: 36, color: appState.primaryColor),
+              ),
+              const SizedBox(height: 16),
+              // 9. Все тексты с заглавной буквы
+              const Text(
+                'Добро пожаловать в\n«Я коплю»',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Твой личный помощник для достижения любых целей и мечт.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600], fontSize: 13),
+              ),
+              const SizedBox(height: 20),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF3EDF7),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Column(
+                  children: [
+                    _buildFeatureItem(Icons.person_outline, 'Персонализация', 'Указывай своё имя для удобства.', appState.primaryColor),
+                    const Divider(height: 16),
+                    _buildFeatureItem(Icons.image_outlined, 'Визуализация мечты', 'Добавляй фото целей из галереи.', appState.primaryColor),
+                    const Divider(height: 16),
+                    _buildFeatureItem(Icons.palette_outlined, 'Дизайн и темы', 'Палитра под настроение.', appState.primaryColor),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF3EDF7),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Давай знакомиться', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    const SizedBox(height: 12),
+                    // 12. Поле только для имени
+                    TextField(
+                      controller: _nameController,
+                      decoration: InputDecoration(
+                        labelText: 'Ваше имя *',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text('Выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+                    const SizedBox(height: 10),
+                    // 7 & 12. Динамическое изменение цвета при нажатии
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: List.generate(
+                        appState.lightColors.length,
+                        (index) => GestureDetector(
+                          onTap: () {
+                            appState.setColor(index);
+                          },
+                          child: CircleAvatar(
+                            radius: 18,
+                            backgroundColor: isDark ? appState.darkColors[index] : appState.lightColors[index],
+                            child: appState.selectedColorIndex == index
+                                ? const Icon(Icons.check, color: Colors.white, size: 18)
+                                : null,
+                          ),
+                        ),
+                      ),
+                    )
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () {
+                    if (_nameController.text.trim().isNotEmpty) {
+                      final name = _nameController.text.trim();
+                      appState.registerUser(name);
+                      Navigator.pushReplacement(
+                        context,
+                        createAnimatedRoute(WelcomeGreetingScreen(userName: name)),
+                      );
+                    }
+                  },
+                  child: const Text('Продолжить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFeatureItem(IconData icon, String title, String subtitle, Color color) {
+    return Row(
+      children: [
+        Icon(icon, color: color, size: 24),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              Text(subtitle, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+            ],
+          ),
+        )
+      ],
+    );
+  }
+}
+
+class WelcomeGreetingScreen extends StatelessWidget {
+  final String userName;
+
+  const WelcomeGreetingScreen({super.key, required this.userName});
+
+  @override
+  Widget build(BuildContext context) {
+    final appState = MyApp.of(context)!;
+
     return Scaffold(
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              CircleAvatar(
-                radius: 36,
-                backgroundColor: selectedColor.withOpacity(0.15),
-                child: Icon(Icons.savings, size: 40, color: selectedColor),
-              ),
-              const SizedBox(height: 16),
-              // 9. текст с заглавной буквы
-              const Text(
-                "Добро пожаловать в «Я коплю»",
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                "Твой личный помощник для достижения любых целей и мечт.",
-                style: TextStyle(color: Colors.grey),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 32),
-              TextField(
-                controller: _nameController,
-                decoration: InputDecoration(
-                  // 12. поле только для имени (без фамилии)
-                  labelText: "Ваше имя *",
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+              const Spacer(),
+              Center(
+                child: Text(
+                  'Здравствуйте, $userName!',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
                 ),
               ),
-              const SizedBox(height: 24),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text("Выберите цвет темы", style: TextStyle(fontWeight: FontWeight.w500)),
-              ),
-              const SizedBox(height: 12),
-              // 7 & 12. динамическая смена цвета при выборе в регистрации
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: widget.rainbowColors.map((color) {
-                  return GestureDetector(
-                    onTap: () {
-                      setState(() {
-                        selectedColor = color;
-                      });
-                    },
-                    child: CircleAvatar(
-                      radius: 20,
-                      backgroundColor: color,
-                      child: selectedColor == color
-                          ? const Icon(Icons.check, color: Colors.white, size: 20)
-                          : null,
-                    ),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 32),
+              const Spacer(),
               SizedBox(
                 width: double.infinity,
-                height: 50,
+                height: 52,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: selectedColor,
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   ),
                   onPressed: () {
-                    if (_nameController.text.trim().isNotEmpty) {
-                      widget.onComplete(_nameController.text.trim(), selectedColor);
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => HomeScreen(
-                            userName: _nameController.text.trim(),
-                            primaryColor: selectedColor,
-                            rainbowColors: widget.rainbowColors,
-                          ),
-                        ),
-                      );
-                    }
+                    Navigator.pushReplacement(
+                      context,
+                      createAnimatedRoute(HomeScreen(userName: userName)),
+                    );
                   },
-                  child: const Text("Продолжить", style: TextStyle(color: Colors.white, fontSize: 16)),
+                  child: const Text('Продолжить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
-              )
+              ),
             ],
           ),
         ),
@@ -190,188 +355,459 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   }
 }
 
-// главный экран
 class HomeScreen extends StatefulWidget {
   final String userName;
-  final Color primaryColor;
-  final List<Color> rainbowColors;
 
-  const HomeScreen({
-    super.key,
-    required this.userName,
-    required this.primaryColor,
-    required this.rainbowColors,
-  });
+  const HomeScreen({super.key, required this.userName});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late Color currentColor;
+  double currentAmount = 0.0;
+  // 10. Изначальная цена мечты — 0 рублей
+  double targetAmount = 0.0;
+  String goalTitle = 'Моя первая мечта';
+  List<String> history = [];
+
   File? _imageFile;
   final ImagePicker _picker = ImagePicker();
-
-  String goalName = "Моя первая мечта";
-  // 10. изначальная цена мечты — 0 рублей
-  double targetAmount = 0.0;
-  double currentAmount = 0.0;
-
-  List<Map<String, dynamic>> operations = [];
 
   @override
   void initState() {
     super.initState();
-    currentColor = widget.primaryColor;
+    _loadSavedMoneyData();
   }
 
-  // 2. рабочая функция выбора фото из галереи
+  Future<void> _loadSavedMoneyData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final imagePath = prefs.getString('goal_image_path');
+    setState(() {
+      currentAmount = prefs.getDouble('current_amount') ?? 0.0;
+      targetAmount = prefs.getDouble('target_amount') ?? 0.0;
+      goalTitle = prefs.getString('goal_title') ?? 'Моя первая мечта';
+      history = prefs.getStringList('history_list') ?? [];
+      if (imagePath != null && imagePath.isNotEmpty) {
+        _imageFile = File(imagePath);
+      }
+    });
+  }
+
+  // 2. Исправленный выбор фото из галереи
   Future<void> _pickImage() async {
     final XFile? picked = await _picker.pickImage(source: ImageSource.gallery);
     if (picked != null) {
       setState(() {
         _imageFile = File(picked.path);
       });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('goal_image_path', picked.path);
     }
   }
 
-  // 11. поздравление при достижении цели
+  Future<void> _updateMoney(double delta) async {
+    setState(() {
+      currentAmount += delta;
+      if (currentAmount < 0) currentAmount = 0;
+      final type = delta > 0 ? '+' : '-';
+      final entry = '$type ${delta.abs().toStringAsFixed(0)} ₽';
+      history.insert(0, entry);
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('current_amount', currentAmount);
+    await prefs.setStringList('history_list', history);
+
+    _checkGoalReached();
+  }
+
+  // 11. Поздравление на весь экран
   void _checkGoalReached() {
     if (targetAmount > 0 && currentAmount >= targetAmount) {
       showDialog(
         context: context,
-        builder: (context) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 16),
-              Icon(Icons.emoji_events, size: 60, color: currentColor),
-              const SizedBox(height: 16),
-              Text(
-                "Поздравляю с достижением цели, ${widget.userName}",
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        barrierDismissible: false,
+        builder: (context) {
+          final appState = MyApp.of(context)!;
+          return Dialog.fullscreen(
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Spacer(),
+                    Icon(Icons.emoji_events_rounded, size: 100, color: appState.primaryColor),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Поздравляю с достижением цели, ${widget.userName}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'ты молодец!',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const Spacer(),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: appState.primaryColor,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Ура!', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 12),
-              const Text(
-                "ты молодец!",
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: currentColor),
-                onPressed: () => Navigator.pop(context),
-                child: const Text("Ура!", style: TextStyle(color: Colors.white)),
-              )
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       );
     }
   }
 
+  Future<void> _updateGoal(String newTitle, double newTarget) async {
+    setState(() {
+      goalTitle = newTitle;
+      targetAmount = newTarget;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('goal_title', goalTitle);
+    await prefs.setDouble('target_amount', targetAmount);
+  }
+
+  void _showSettingsModal() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 1. Убраны все эмодзи
+              const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              const Text('Выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+              const SizedBox(height: 12),
+              // 7. Расположение по цветам радуги
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: List.generate(
+                  appState.lightColors.length,
+                  (index) => GestureDetector(
+                    onTap: () {
+                      appState.setColor(index);
+                      Navigator.pop(context);
+                    },
+                    child: CircleAvatar(
+                      radius: 18,
+                      backgroundColor: appState.isDark ? appState.darkColors[index] : appState.lightColors[index],
+                      child: appState.selectedColorIndex == index
+                          ? const Icon(Icons.check, color: Colors.white, size: 18)
+                          : null,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SwitchListTile(
+                title: const Text('Тёмная тема'),
+                value: appState.isDark,
+                onChanged: (val) {
+                  appState.toggleTheme(val);
+                  Navigator.pop(context);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showEditGoalModal() {
+    final titleController = TextEditingController(text: goalTitle);
+    final targetController = TextEditingController(text: targetAmount.toStringAsFixed(0));
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            top: 24,
+            left: 24,
+            right: 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 1. Убраны все эмодзи
+              const Text('Изменить цель', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              TextField(
+                controller: titleController,
+                decoration: InputDecoration(
+                  labelText: 'Название цели',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: targetController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Целевая сумма (в рублях)',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () {
+                    final newTitle = titleController.text.trim();
+                    final newTarget = double.tryParse(targetController.text.trim()) ?? targetAmount;
+                    if (newTitle.isNotEmpty && newTarget >= 0) {
+                      _updateGoal(newTitle, newTarget);
+                      Navigator.pop(context);
+                    }
+                  },
+                  child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showTransactionBottomSheet(bool isAdding) {
+    // 10. Если цена мечты равен 0 — запрещаем ввод и показываем уведомление
+    if (targetAmount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Сначала укажите цену мечты!')),
+      );
+      return;
+    }
+
+    final controller = TextEditingController();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            top: 24,
+            left: 24,
+            right: 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 1. Убраны все эмодзи
+              Text(
+                isAdding ? 'Пополнить копилку' : 'Потратил из копилки',
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'Сумма (в рублях)',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () {
+                    final val = double.tryParse(controller.text.trim()) ?? 0;
+                    if (val > 0) {
+                      _updateMoney(isAdding ? val : -val);
+                      Navigator.pop(context);
+                    }
+                  },
+                  child: Text(isAdding ? 'Добавить' : 'Списать', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final appState = MyApp.of(context)!;
+    final isDark = appState.isDark;
 
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.userName, style: const TextStyle(fontWeight: FontWeight.bold)),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => _showSettings(context),
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: _showSettingsModal,
           ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(20.0),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // карточка цели
-            Card(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  children: [
-                    // 2 & 3. фото с автоматической адаптацией под его физические пропорции (16:9, 1:1 и т.д.)
-                    GestureDetector(
-                      onTap: _pickImage,
-                      child: _imageFile != null
-                          ? ClipRRect(
+            // Карточка цели
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  if (!isDark)
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.04),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  // 3. Динамическая подстройка под пропорции картинки (16:9, квадрат и т.д.)
+                  GestureDetector(
+                    onTap: _pickImage,
+                    child: _imageFile != null
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(16),
+                            child: Image.file(_imageFile!, fit: BoxFit.contain),
+                          )
+                        : Container(
+                            height: 140,
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              color: appState.primaryColor.withOpacity(0.1),
                               borderRadius: BorderRadius.circular(16),
-                              child: Image.file(_imageFile!, fit: BoxFit.contain),
-                            )
-                          : Container(
-                              height: 120,
-                              width: double.infinity,
-                              decoration: BoxDecoration(
-                                color: currentColor.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.add_a_photo, color: currentColor, size: 36),
-                                  const SizedBox(height: 8),
-                                  Text("Нажмите, чтобы выбрать фото цели", style: TextStyle(color: currentColor, fontSize: 12)),
-                                ],
-                              ),
                             ),
-                    ),
-                    const SizedBox(height: 16),
-                    // 8. название цели без старой кнопки карандаша
-                    Text(goalName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 8),
-                    Text(
-                      "${currentAmount.toInt()} / ${targetAmount.toInt()} ₽",
-                      style: TextStyle(fontSize: 20, color: currentColor, fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.add_a_photo_outlined, color: appState.primaryColor, size: 36),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Нажмите, чтобы выбрать фото цели',
+                                  style: TextStyle(color: appState.primaryColor, fontSize: 12, fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
+                  ),
+                  const SizedBox(height: 16),
+                  // 8. Название мечты без карандаша
+                  Text(
+                    goalTitle,
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${currentAmount.toInt()} / ${targetAmount.toInt()} ₽',
+                    style: TextStyle(fontSize: 22, color: appState.primaryColor, fontWeight: FontWeight.bold),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 16),
 
-            // 8. кнопки действий с уменьшенной кнопкой потратил и кружочком изменения
+            // 8. Блок кнопок: Пополнить, Уменьшенная Потратил, и Круглая Изменить
             Row(
               children: [
                 Expanded(
                   flex: 3,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: currentColor,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: SizedBox(
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: appState.primaryColor,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      onPressed: () => _showTransactionBottomSheet(true),
+                      icon: const Icon(Icons.add, size: 20),
+                      label: const Text('Пополнить', style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
-                    onPressed: () => _showAddMoneyDialog(),
-                    icon: const Icon(Icons.add, color: Colors.white),
-                    label: const Text("Пополнить", style: TextStyle(color: Colors.white)),
                   ),
                 ),
                 const SizedBox(width: 8),
-                // 4 & 8. уменьшенная кнопка потратил с прозрачным фоном и цветной обводкой
+                // 4 & 8. Прозрачная кнопка с динамической обводкой в цвет темы
                 Expanded(
                   flex: 2,
-                  child: OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: currentColor, width: 2),
-                      backgroundColor: Colors.transparent,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: SizedBox(
+                    height: 48,
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        side: BorderSide(color: appState.primaryColor, width: 2),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      onPressed: () => _showTransactionBottomSheet(false),
+                      child: Text(
+                        'Потратил',
+                        style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold),
+                      ),
                     ),
-                    onPressed: () => _showSpendMoneyDialog(),
-                    child: Text("Потратил", style: TextStyle(color: currentColor, fontWeight: FontWeight.bold)),
                   ),
                 ),
                 const SizedBox(width: 8),
-                // 8. круглая кнопка с карандашиком для изменения цели
+                // 8. Круглая кнопка изменения темы с карандашиком
                 GestureDetector(
-                  onTap: () => _showEditGoalDialog(),
+                  onTap: _showEditGoalModal,
                   child: CircleAvatar(
-                    radius: 22,
-                    backgroundColor: currentColor,
-                    child: const Icon(Icons.edit, color: Colors.white, size: 20),
+                    radius: 24,
+                    backgroundColor: appState.primaryColor,
+                    child: const Icon(Icons.edit_outlined, color: Colors.white, size: 20),
                   ),
                 ),
               ],
@@ -379,210 +815,53 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 24),
 
-            // 5. история операций всегда на экране
-            Align(
-              alignment: Alignment.centerLeft,
-              child: const Text("История операций", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ),
-            const SizedBox(height: 8),
-            Card(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: operations.isEmpty
-                    // 5. надпись если нет операций
-                    ? const Center(
-                        child: Text("Операций пока нет", style: TextStyle(color: Colors.grey)),
-                      )
-                    : ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: operations.length,
-                        itemBuilder: (context, index) {
-                          final item = operations[index];
-                          return ListTile(
-                            title: Text(item['title']),
-                            trailing: Text(
-                              "${item['isAdd'] ? '+' : '-'}${item['amount']} ₽",
+            // 5. История операций всегда на главном экране
+            const Text('История операций', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: history.isEmpty
+                  // 5. Текст если операций нет
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12.0),
+                        child: Text(
+                          'Операций пока нет',
+                          style: TextStyle(color: Colors.grey, fontSize: 14),
+                        ),
+                      ),
+                    )
+                  : ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: history.length,
+                      separatorBuilder: (context, index) => const Divider(height: 16),
+                      itemBuilder: (context, index) {
+                        final item = history[index];
+                        final isAdd = item.startsWith('+');
+                        return Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              isAdd ? 'Пополнение' : 'Списание',
+                              style: const TextStyle(fontWeight: FontWeight.w500),
+                            ),
+                            Text(
+                              item,
                               style: TextStyle(
-                                color: item['isAdd'] ? Colors.green : Colors.red,
+                                color: isAdd ? Colors.green : Colors.red,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                          );
-                        },
-                      ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // 10. проверка возможности изменения баланса (нельзя если цена цели = 0)
-  void _showAddMoneyDialog() {
-    if (targetAmount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Сначала укажите цену мечты!")),
-      );
-      return;
-    }
-    final controller = TextEditingController();
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 1. без эмодзи
-            const Text("Пополнить копилку", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: "Сумма (в рублях)"),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: currentColor),
-              onPressed: () {
-                double val = double.tryParse(controller.text) ?? 0;
-                if (val > 0) {
-                  setState(() {
-                    currentAmount += val;
-                    operations.insert(0, {'title': 'Пополнение', 'amount': val, 'isAdd': true});
-                  });
-                  Navigator.pop(context);
-                  _checkGoalReached();
-                }
-              },
-              child: const Text("Добавить", style: TextStyle(color: Colors.white)),
-            )
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showSpendMoneyDialog() {
-    if (targetAmount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Сначала укажите цену мечты!")),
-      );
-      return;
-    }
-    final controller = TextEditingController();
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 1. без эмодзи
-            const Text("Потратил из копилки", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: "Сумма (в рублях)"),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: currentColor),
-              onPressed: () {
-                double val = double.tryParse(controller.text) ?? 0;
-                if (val > 0) {
-                  setState(() {
-                    currentAmount -= val;
-                    operations.insert(0, {'title': 'Списание', 'amount': val, 'isAdd': false});
-                  });
-                  Navigator.pop(context);
-                }
-              },
-              child: const Text("Списать", style: TextStyle(color: Colors.white)),
-            )
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showEditGoalDialog() {
-    final nameController = TextEditingController(text: goalName);
-    final targetController = TextEditingController(text: targetAmount.toString());
-
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 1. без эмодзи
-            const Text("Изменить цель", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: "Название цели"),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: targetController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: "Целевая сумма (в рублях)"),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: currentColor),
-              onPressed: () {
-                setState(() {
-                  goalName = nameController.text.trim();
-                  targetAmount = double.tryParse(targetController.text) ?? 0.0;
-                });
-                Navigator.pop(context);
-              },
-              child: const Text("Сохранить", style: TextStyle(color: Colors.white)),
-            )
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showSettings(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 1. без эмодзи
-            const Text("Настройки", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            // 7. выбор цвета темы радугой
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: widget.rainbowColors.map((color) {
-                return GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      currentColor = color;
-                    });
-                    Navigator.pop(context);
-                  },
-                  child: CircleAvatar(
-                    radius: 20,
-                    backgroundColor: color,
-                    child: currentColor == color
-                        ? const Icon(Icons.check, color: Colors.white, size: 20)
-                        : null,
-                  ),
-                );
-              }).toList(),
+                          ],
+                        );
+                      },
+                    ),
             ),
           ],
         ),
