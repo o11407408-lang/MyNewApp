@@ -343,7 +343,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: currentColor,
-                      padding: const EdgeInsets.vertical(12),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                     onPressed: () => _showAddMoneyDialog(),
                     icon: const Icon(Icons.add, color: Colors.white),
@@ -358,7 +358,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: OutlinedButton.styleFrom(
                       side: BorderSide(color: currentColor, width: 2),
                       backgroundColor: Colors.transparent,
-                      padding: const EdgeInsets.vertical(12),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                     onPressed: () => _showSpendMoneyDialog(),
                     child: Text("Потратил", style: TextStyle(color: currentColor, fontWeight: FontWeight.bold)),
