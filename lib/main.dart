@@ -756,7 +756,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.calculate_outlined),
+            icon: const Icon(Icons.leaderboard_outlined),
             onPressed: () => _showComingSoonBottomSheet(
               'Таблица лидеров',
               'Сравнение накоплений и достижения других пользователей скоро появятся!',
