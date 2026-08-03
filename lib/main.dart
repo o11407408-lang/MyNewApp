@@ -1,7 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -545,152 +545,107 @@ class _HomeScreenState extends State<HomeScreen> {
     _saveGoalData(currentGoalIndex);
   }
 
-  void _showComingSoonBottomSheet(String title, String description) {
-    showModalBottomSheet(
+  void _showAddMoneyDialog() {
+    final controller = TextEditingController();
+    showDialog(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.hourglass_top_rounded, size: 48, color: appState.primaryColor),
-              const SizedBox(height: 12),
-              const Text('Скоро появится', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
-              const SizedBox(height: 8),
-              Text(
-                description,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 13, color: Colors.grey),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: appState.primaryColor,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  ),
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ],
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: const Text('Пополнить цель'),
+          content: TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: 'Сумма в ₽',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: appState.primaryColor,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+              onPressed: () {
+                final val = double.tryParse(controller.text) ?? 0;
+                if (val > 0) {
+                  _updateMoney(val);
+                }
+                Navigator.pop(context);
+              },
+              child: const Text('Пополнить'),
+            ),
+          ],
         );
       },
     );
   }
 
-  void _showSettingsModal() {
-    showModalBottomSheet(
+  void _showSpendMoneyDialog() {
+    final controller = TextEditingController();
+    showDialog(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              const Text('Выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: List.generate(
-                  appState.lightColors.length,
-                  (index) => GestureDetector(
-                    onTap: () {
-                      appState.setColor(index);
-                      Navigator.pop(context);
-                    },
-                    child: CircleAvatar(
-                      radius: 18,
-                      backgroundColor: appState.isDark ? appState.darkColors[index] : appState.lightColors[index],
-                      child: appState.selectedColorIndex == index
-                          ? const Icon(Icons.check, color: Colors.white, size: 18)
-                          : null,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              SwitchListTile(
-                title: const Text('Тёмная тема'),
-                value: appState.isDark,
-                onChanged: (val) {
-                  appState.toggleTheme(val);
-                  Navigator.pop(context);
-                },
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.red,
-                    side: const BorderSide(color: Colors.red),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  ),
-                  onPressed: () {
-                    Navigator.pop(context);
-                    appState.resetAllData();
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (context) => const OnboardingScreen()),
-                    );
-                  },
-                  icon: const Icon(Icons.delete_forever_outlined),
-                  label: const Text('Сбросить все настройки', style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ],
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: const Text('Потратить с цели'),
+          content: TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: 'Сумма в ₽',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: appState.primaryColor,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+              onPressed: () {
+                final val = double.tryParse(controller.text) ?? 0;
+                if (val > 0) {
+                  _updateMoney(-val);
+                }
+                Navigator.pop(context);
+              },
+              child: const Text('Потратить'),
+            ),
+          ],
         );
       },
     );
   }
 
-  void _showEditGoalModal() {
-    final goal = goals[currentGoalIndex];
-    final titleController = TextEditingController(text: goal.goalTitle);
-    final targetController = TextEditingController(text: goal.targetAmount.toStringAsFixed(0));
+  void _showEditGoalDialog() {
+    final currentGoal = goals[currentGoalIndex];
+    final titleController = TextEditingController(text: currentGoal.goalTitle);
+    final targetController = TextEditingController(text: currentGoal.targetAmount > 0 ? currentGoal.targetAmount.toStringAsFixed(0) : '');
 
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-            top: 24,
-            left: 24,
-            right: 24,
-          ),
-          child: Column(
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: const Text('Редактировать цель'),
+          content: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Изменить цель ${currentGoalIndex + 1}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
               TextField(
                 controller: titleController,
                 decoration: InputDecoration(
@@ -703,103 +658,32 @@ class _HomeScreenState extends State<HomeScreen> {
                 controller: targetController,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
-                  labelText: 'Целевая сумма (в рублях)',
+                  labelText: 'Целевая сумма (₽)',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: appState.primaryColor,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  ),
-                  onPressed: () {
-                    final newTitle = titleController.text.trim();
-                    final newTarget = double.tryParse(targetController.text.trim()) ?? goal.targetAmount;
-                    if (newTitle.isNotEmpty && newTarget >= 0) {
-                      _updateGoal(newTitle, newTarget);
-                      Navigator.pop(context);
-                    }
-                  },
-                  child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
           ),
-        );
-      },
-    );
-  }
-
-  void _showTransactionBottomSheet(bool isAdding) {
-    final goal = goals[currentGoalIndex];
-    if (goal.targetAmount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Сначала укажите цену мечты!')),
-      );
-      return;
-    }
-
-    final controller = TextEditingController();
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      builder: (context) {
-        final appState = MyApp.of(context)!;
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-            top: 24,
-            left: 24,
-            right: 24,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                isAdding ? 'Пополнить копилку' : 'Потратить из копилки',
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: appState.primaryColor,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: controller,
-                keyboardType: TextInputType.number,
-                autofocus: true,
-                decoration: InputDecoration(
-                  labelText: 'Сумма (в рублях)',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: appState.primaryColor,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  ),
-                  onPressed: () {
-                    final val = double.tryParse(controller.text.trim()) ?? 0;
-                    if (val > 0) {
-                      _updateMoney(isAdding ? val : -val);
-                      Navigator.pop(context);
-                    }
-                  },
-                  child: Text(isAdding ? 'Добавить' : 'Списать', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ],
-          ),
+              onPressed: () {
+                final newTitle = titleController.text.trim().isNotEmpty ? titleController.text.trim() : currentGoal.goalTitle;
+                final newTarget = double.tryParse(targetController.text) ?? currentGoal.targetAmount;
+                _updateGoal(newTitle, newTarget);
+                Navigator.pop(context);
+              },
+              child: const Text('Сохранить'),
+            ),
+          ],
         );
       },
     );
@@ -809,84 +693,100 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final appState = MyApp.of(context)!;
     final isDark = appState.isDark;
-    final fullName = widget.userLastName.isNotEmpty ? '${widget.userName} ${widget.userLastName}' : widget.userName;
+    final currentGoal = goals[currentGoalIndex];
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(fullName, style: const TextStyle(fontWeight: FontWeight.bold)),
-        flexibleSpace: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                appState.primaryColor.withOpacity(0.35),
-                isDark ? const Color(0xFF121212) : const Color(0xFFFBF8FF),
-              ],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
-          ),
-        ),
-        actions: [
-          // Калькулятор убран согласно заданию
-          IconButton(
-            icon: const Icon(Icons.leaderboard_outlined),
-            onPressed: () => _showComingSoonBottomSheet(
-              'Таблица лидеров',
-              'Сравнение накоплений и достижения других пользователей скоро появятся!',
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: _showSettingsModal,
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Свайпаемый блок двух целей
-            SizedBox(
-              height: 270,
-              child: PageView.builder(
-                controller: _pageController,
-                itemCount: 2,
-                onPageChanged: (index) {
-                  setState(() {
-                    currentGoalIndex = index;
-                  });
-                },
-                itemBuilder: (context, index) {
-                  final goal = goals[index];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-                        borderRadius: BorderRadius.circular(24),
-                        boxShadow: [
-                          if (!isDark)
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.04),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                        ],
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    widget.userName,
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  ),
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.settings_outlined),
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            createAnimatedRoute(const SettingsScreen()),
+                          );
+                        },
                       ),
-                      child: Column(
-                        children: [
-                          Expanded(
-                            child: GestureDetector(
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              
+              // Адаптивная карточка цели под размеры картинки через PageView
+              SizedBox(
+                child: PageView.builder(
+                  controller: _pageController,
+                  itemCount: goals.length,
+                  onPageChanged: (index) {
+                    setState(() {
+                      currentGoalIndex = index;
+                    });
+                  },
+                  itemBuilder: (context, index) {
+                    final goal = goals[index];
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                          borderRadius: BorderRadius.circular(24),
+                          boxShadow: [
+                            if (!isDark)
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.04),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  goal.goalTitle,
+                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.edit_outlined, size: 20),
+                                  onPressed: _showEditGoalDialog,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            GestureDetector(
                               onTap: _pickImage,
                               child: goal.imagePath != null
                                   ? ClipRRect(
                                       borderRadius: BorderRadius.circular(16),
-                                      child: Image.file(File(goal.imagePath!), fit: BoxFit.contain, width: double.infinity),
+                                      child: AspectRatio(
+                                        aspectRatio: 4 / 3,
+                                        child: Image.file(
+                                          File(goal.imagePath!),
+                                          fit: BoxFit.cover,
+                                          width: double.infinity,
+                                        ),
+                                      ),
                                     )
                                   : Container(
+                                      height: 160,
                                       width: double.infinity,
                                       decoration: BoxDecoration(
                                         color: appState.primaryColor.withOpacity(0.1),
@@ -905,244 +805,257 @@ class _HomeScreenState extends State<HomeScreen> {
                                       ),
                                     ),
                             ),
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            goal.goalTitle,
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ₽',
-                            style: TextStyle(fontSize: 18, color: appState.primaryColor, fontWeight: FontWeight.bold),
-                          ),
-                        ],
+                            const SizedBox(height: 12),
+                            Text(
+                              '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ₽',
+                              style: TextStyle(fontSize: 18, color: appState.primaryColor, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  );
-                },
+                    );
+                  },
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
-            // Индикатор точек для свайпа целей
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(2, (index) {
-                return Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  width: currentGoalIndex == index ? 16 : 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: currentGoalIndex == index ? appState.primaryColor : Colors.grey.withOpacity(0.4),
-                    borderRadius: BorderRadius.circular(4),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(
+                  goals.length,
+                  (index) => Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    width: currentGoalIndex == index ? 16 : 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: currentGoalIndex == index ? appState.primaryColor : Colors.grey.withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
                   ),
-                );
-              }),
-            ),
-            const SizedBox(height: 16),
-
-            Row(
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: SizedBox(
-                    height: 48,
-                    child: ElevatedButton.icon(
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: appState.primaryColor,
                         foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
-                      onPressed: () => _showTransactionBottomSheet(true),
-                      icon: const Icon(Icons.add, size: 20),
-                      label: const Text('Пополнить', style: TextStyle(fontWeight: FontWeight.bold)),
+                      onPressed: _showAddMoneyDialog,
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.add, size: 20),
+                          SizedBox(width: 8),
+                          Text('Пополнить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 2,
-                  child: SizedBox(
-                    height: 48,
+                  const SizedBox(width: 12),
+                  Expanded(
                     child: OutlinedButton(
                       style: OutlinedButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        side: BorderSide(color: appState.primaryColor, width: 2),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        side: BorderSide(color: appState.primaryColor, width: 1.5),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
-                      onPressed: () => _showTransactionBottomSheet(false),
+                      onPressed: _showSpendMoneyDialog,
                       child: Text(
                         'Потратил',
-                        style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold),
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: appState.primaryColor),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: _showEditGoalModal,
-                  child: CircleAvatar(
-                    radius: 24,
-                    backgroundColor: appState.primaryColor,
-                    child: const Icon(Icons.edit_outlined, color: Colors.white, size: 20),
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 24),
-
-            const Text('История операций', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-                borderRadius: BorderRadius.circular(20),
+                ],
               ),
-              child: goals[currentGoalIndex].history.isEmpty
-                  ? const Center(
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 12.0),
-                        child: Text(
-                          'Операций пока нет',
-                          style: TextStyle(color: Colors.grey, fontSize: 14),
-                        ),
-                      ),
-                    )
-                  : ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: goals[currentGoalIndex].history.length,
-                      separatorBuilder: (context, index) => const Divider(height: 16),
-                      itemBuilder: (context, index) {
-                        final item = goals[currentGoalIndex].history[index];
-                        final isAdd = item.startsWith('+');
-                        return Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              isAdd ? 'Пополнение' : 'Списание',
-                              style: const TextStyle(fontWeight: FontWeight.w500),
-                            ),
-                            Text(
-                              item,
-                              style: TextStyle(
-                                color: isAdd ? Colors.green : Colors.red,
-                                fontWeight: FontWeight.bold,
+              const SizedBox(height: 20),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'История операций',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: currentGoal.history.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'Операций пока нет',
+                            style: TextStyle(color: Colors.grey, fontSize: 14),
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: currentGoal.history.length,
+                          itemBuilder: (context, index) {
+                            final item = currentGoal.history[index];
+                            final isPlus = item.startsWith('+');
+                            return ListTile(
+                              dense: true,
+                              title: Text(
+                                item,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: isPlus ? Colors.green : Colors.red,
+                                ),
                               ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-            ),
+                            );
+                          },
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
-            const SizedBox(height: 24),
+// Экран настроек с пасхалкой (5 тапов на версию приложения)
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({super.key});
 
-            // Карточка «Поддержать проект»
-            Container(
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  int _versionClickCount = 0;
+
+  void _showBaliEasterEgg(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        final appState = MyApp.of(context)!;
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          title: const Text(
+            'Пасхалка 🌴',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'Марат, главный разработчик этого приложения, заслуживает отдых на Бали',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16),
+          ),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            SizedBox(
               width: double.infinity,
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Column(
-                children: [
-                  Icon(Icons.favorite, color: appState.primaryColor, size: 36),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Поддержать проект',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Приложение абсолютно бесплатное и без подписок!',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 16),
-                  OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      side: BorderSide(color: isDark ? Colors.white38 : Colors.grey[700]!),
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    ),
-                    onPressed: () => _showComingSoonBottomSheet(
-                      'Поддержать проект',
-                      'Возможность отправить донат разработчику появится в ближайшем обновлении!',
-                    ),
-                    child: Text(
-                      'Отправить донат',
-                      style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
-                    ),
-                  )
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // Карточка «Наш телеграм канал»
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Column(
-                children: [
-                  Icon(Icons.send_rounded, color: appState.primaryColor, size: 36),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Наш телеграм канал',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Сообщайте о багах, делитесь идеями и следите за обновлениями!',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 16),
-                  OutlinedButton(
-                    style: OutlinedButton.styleFrom(
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      side: BorderSide(color: isDark ? Colors.white38 : Colors.grey[700]!),
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    ),
-                    onPressed: () => _showComingSoonBottomSheet(
-                      'Телеграм канал',
-                      'Наш официальный телеграм-канал с обновлениями откроется совсем скоро!',
-                    ),
-                    child: Text(
-                      'Сообщить о баге / Идеи',
-                      style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
-                    ),
-                  )
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 24),
-
-            // Строка с версией приложения в самом низу
-            const Center(
-              child: Text(
-                'Я Коплю: мечты v.2.3 (beta)',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey,
-                  fontWeight: FontWeight.w400,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: appState.primaryColor,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                  _showEmojiFireworks(context);
+                },
+                child: const Text(
+                  'Согласен',
+                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ),
             ),
-            const SizedBox(height: 10),
           ],
+        );
+      },
+    );
+  }
+
+  void _showEmojiFireworks(BuildContext context) {
+    OverlayEntry? overlayEntry;
+    overlayEntry = OverlayEntry(
+      builder: (context) => Positioned.fill(
+        child: IgnorePointer(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0.0, end: 1.0),
+            duration: const Duration(seconds: 3),
+            onEnd: () {
+              overlayEntry?.remove();
+            },
+            builder: (context, value, child) {
+              return Stack(
+                children: [
+                  Positioned(
+                    top: MediaQuery.of(context).size.height * (1 - value),
+                    left: MediaQuery.of(context).size.width * 0.2,
+                    child: const Text('🌴', style: TextStyle(fontSize: 36)),
+                  ),
+                  Positioned(
+                    top: MediaQuery.of(context).size.height * (0.8 - value * 0.7),
+                    right: MediaQuery.of(context).size.width * 0.3,
+                    child: const Text('💸', style: TextStyle(fontSize: 36)),
+                  ),
+                  Positioned(
+                    top: MediaQuery.of(context).size.height * (0.9 - value * 0.9),
+                    left: MediaQuery.of(context).size.width * 0.5,
+                    child: const Text('🎉', style: TextStyle(fontSize: 36)),
+                  ),
+                ],
+              );
+            },
+          ),
         ),
+      ),
+    );
+
+    Overlay.of(context).insert(overlayEntry);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final appState = MyApp.of(context)!;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Настройки'),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          SwitchListTile(
+            title: const Text('Темная тема'),
+            value: appState.isDark,
+            onChanged: (val) {
+              appState.toggleTheme();
+            },
+          ),
+          const Divider(),
+          const SizedBox(height: 20),
+          Center(
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  _versionClickCount++;
+                  if (_versionClickCount == 5) {
+                    _versionClickCount = 0;
+                    _showBaliEasterEgg(context);
+                  }
+                });
+              },
+              child: const Text(
+                'Версия 1.0.0',
+                style: TextStyle(color: Colors.grey, fontSize: 14),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
