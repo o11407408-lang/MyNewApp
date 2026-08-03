@@ -8,12 +8,14 @@ void main() async {
   final prefs = await SharedPreferences.getInstance();
   final isRegistered = prefs.getBool('is_registered') ?? false;
   final savedName = prefs.getString('user_name') ?? '';
+  final savedLastName = prefs.getString('user_last_name') ?? '';
   final isDark = prefs.getBool('is_dark') ?? false;
   final colorIndex = prefs.getInt('color_index') ?? 0;
 
   runApp(MyApp(
     isRegistered: isRegistered,
     savedName: savedName,
+    savedLastName: savedLastName,
     initialIsDark: isDark,
     initialColorIndex: colorIndex,
   ));
@@ -22,6 +24,7 @@ void main() async {
 class MyApp extends StatefulWidget {
   final bool isRegistered;
   final String savedName;
+  final String savedLastName;
   final bool initialIsDark;
   final int initialColorIndex;
 
@@ -29,6 +32,7 @@ class MyApp extends StatefulWidget {
     super.key,
     required this.isRegistered,
     required this.savedName,
+    required this.savedLastName,
     required this.initialIsDark,
     required this.initialColorIndex,
   });
@@ -44,6 +48,7 @@ class _MyAppState extends State<MyApp> {
   late bool isDark;
   late int selectedColorIndex;
   late String userName;
+  late String userLastName;
   late bool isRegistered;
 
   final List<Color> lightColors = [
@@ -70,6 +75,7 @@ class _MyAppState extends State<MyApp> {
     isDark = widget.initialIsDark;
     selectedColorIndex = widget.initialColorIndex;
     userName = widget.savedName;
+    userLastName = widget.savedLastName;
     isRegistered = widget.isRegistered;
   }
 
@@ -94,12 +100,14 @@ class _MyAppState extends State<MyApp> {
     });
   }
 
-  void registerUser(String name) async {
+  void registerUser(String name, String lastName) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('user_name', name);
+    await prefs.setString('user_last_name', lastName);
     await prefs.setBool('is_registered', true);
     setState(() {
       userName = name;
+      userLastName = lastName;
       isRegistered = true;
     });
   }
@@ -110,6 +118,7 @@ class _MyAppState extends State<MyApp> {
     setState(() {
       isRegistered = false;
       userName = '';
+      userLastName = '';
       isDark = false;
       selectedColorIndex = 0;
     });
@@ -127,7 +136,7 @@ class _MyAppState extends State<MyApp> {
         useMaterial3: true,
       ),
       home: isRegistered
-          ? HomeScreen(userName: userName)
+          ? HomeScreen(userName: userName, userLastName: userLastName)
           : const OnboardingScreen(),
     );
   }
@@ -160,11 +169,14 @@ class OnboardingScreen extends StatefulWidget {
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
   final _nameController = TextEditingController();
+  final _lastNameController = TextEditingController();
+  int? tempSelectedColorIndex;
 
   @override
   Widget build(BuildContext context) {
     final appState = MyApp.of(context)!;
     final isDark = appState.isDark;
+    final bool canContinue = tempSelectedColorIndex != null;
 
     return Scaffold(
       body: SafeArea(
@@ -175,8 +187,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               const SizedBox(height: 10),
               CircleAvatar(
                 radius: 35,
-                backgroundColor: appState.primaryColor.withOpacity(0.15),
-                child: Icon(Icons.savings_outlined, size: 36, color: appState.primaryColor),
+                backgroundColor: tempSelectedColorIndex != null 
+                    ? (isDark ? appState.darkColors[tempSelectedColorIndex!] : appState.lightColors[tempSelectedColorIndex!]).withOpacity(0.15)
+                    : Colors.grey.withOpacity(0.15),
+                child: Icon(
+                  Icons.savings_outlined, 
+                  size: 36, 
+                  color: tempSelectedColorIndex != null 
+                      ? (isDark ? appState.darkColors[tempSelectedColorIndex!] : appState.lightColors[tempSelectedColorIndex!])
+                      : Colors.grey
+                ),
               ),
               const SizedBox(height: 16),
               const Text(
@@ -200,11 +220,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
                 child: Column(
                   children: [
-                    _buildFeatureItem(Icons.person_outline, 'Персонализация', 'Указывай своё имя для удобства.', appState.primaryColor),
+                    _buildFeatureItem(Icons.person_outline, 'Персонализация', 'Указывай имя и фамилию.', appState.primaryColor),
                     const Divider(height: 16),
-                    _buildFeatureItem(Icons.image_outlined, 'Визуализация мечты', 'Добавляй фото целей из галереи.', appState.primaryColor),
+                    _buildFeatureItem(Icons.image_outlined, 'Визуализация мечты', 'Добавляй фото двух целей.', appState.primaryColor),
                     const Divider(height: 16),
-                    _buildFeatureItem(Icons.palette_outlined, 'Дизайн и темы', 'Палитра под настроение.', appState.primaryColor),
+                    _buildFeatureItem(Icons.palette_outlined, 'Дизайн и темы', 'Выбирай любимый цвет темы.', appState.primaryColor),
                   ],
                 ),
               ),
@@ -228,8 +248,23 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                     ),
-                    const SizedBox(height: 14),
-                    const Text('Выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _lastNameController,
+                      decoration: InputDecoration(
+                        labelText: 'Фамилия (необязательно)',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'выберете цвет темы',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
                     const SizedBox(height: 10),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -237,12 +272,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         appState.lightColors.length,
                         (index) => GestureDetector(
                           onTap: () {
+                            setState(() {
+                              tempSelectedColorIndex = index;
+                            });
                             appState.setColor(index);
                           },
                           child: CircleAvatar(
                             radius: 18,
                             backgroundColor: isDark ? appState.darkColors[index] : appState.lightColors[index],
-                            child: appState.selectedColorIndex == index
+                            child: tempSelectedColorIndex == index
                                 ? const Icon(Icons.check, color: Colors.white, size: 18)
                                 : null,
                           ),
@@ -258,20 +296,23 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 height: 52,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: appState.primaryColor,
+                    backgroundColor: canContinue ? appState.primaryColor : Colors.grey.withOpacity(0.4),
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   ),
-                  onPressed: () {
-                    if (_nameController.text.trim().isNotEmpty) {
-                      final name = _nameController.text.trim();
-                      appState.registerUser(name);
-                      Navigator.pushReplacement(
-                        context,
-                        createAnimatedRoute(WelcomeGreetingScreen(userName: name)),
-                      );
-                    }
-                  },
+                  onPressed: canContinue
+                      ? () {
+                          if (_nameController.text.trim().isNotEmpty) {
+                            final name = _nameController.text.trim();
+                            final lastName = _lastNameController.text.trim();
+                            appState.registerUser(name, lastName);
+                            Navigator.pushReplacement(
+                              context,
+                              createAnimatedRoute(WelcomeGreetingScreen(userName: name, userLastName: lastName)),
+                            );
+                          }
+                        }
+                      : null,
                   child: const Text('Продолжить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
               ),
@@ -303,12 +344,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
 class WelcomeGreetingScreen extends StatelessWidget {
   final String userName;
+  final String userLastName;
 
-  const WelcomeGreetingScreen({super.key, required this.userName});
+  const WelcomeGreetingScreen({super.key, required this.userName, required this.userLastName});
 
   @override
   Widget build(BuildContext context) {
     final appState = MyApp.of(context)!;
+    final fullName = userLastName.isNotEmpty ? '$userName $userLastName' : userName;
 
     return Scaffold(
       body: SafeArea(
@@ -319,7 +362,7 @@ class WelcomeGreetingScreen extends StatelessWidget {
               const Spacer(),
               Center(
                 child: Text(
-                  'Здравствуйте, $userName!',
+                  'Здравствуйте, $fullName!',
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
                 ),
@@ -337,7 +380,7 @@ class WelcomeGreetingScreen extends StatelessWidget {
                   onPressed: () {
                     Navigator.pushReplacement(
                       context,
-                      createAnimatedRoute(HomeScreen(userName: userName)),
+                      createAnimatedRoute(HomeScreen(userName: userName, userLastName: userLastName)),
                     );
                   },
                   child: const Text('Продолжить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -351,72 +394,100 @@ class WelcomeGreetingScreen extends StatelessWidget {
   }
 }
 
+class GoalData {
+  double currentAmount;
+  double targetAmount;
+  String goalTitle;
+  List<String> history;
+  String? imagePath;
+
+  GoalData({
+    required this.currentAmount,
+    required this.targetAmount,
+    required this.goalTitle,
+    required this.history,
+    this.imagePath,
+  });
+}
+
 class HomeScreen extends StatefulWidget {
   final String userName;
+  final String userLastName;
 
-  const HomeScreen({super.key, required this.userName});
+  const HomeScreen({super.key, required this.userName, required this.userLastName});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  double currentAmount = 0.0;
-  double targetAmount = 0.0;
-  String goalTitle = 'Моя первая мечта';
-  List<String> history = [];
+  int currentGoalIndex = 0;
+  final PageController _pageController = PageController();
 
-  File? _imageFile;
+  List<GoalData> goals = [
+    GoalData(currentAmount: 0, targetAmount: 0, goalTitle: 'Цель 1', history: []),
+    GoalData(currentAmount: 0, targetAmount: 0, goalTitle: 'Цель 2', history: []),
+  ];
+
   final ImagePicker _picker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
-    _loadSavedMoneyData();
+    _loadAllGoals();
   }
 
-  Future<void> _loadSavedMoneyData() async {
+  Future<void> _loadAllGoals() async {
     final prefs = await SharedPreferences.getInstance();
-    final imagePath = prefs.getString('goal_image_path');
     setState(() {
-      currentAmount = prefs.getDouble('current_amount') ?? 0.0;
-      targetAmount = prefs.getDouble('target_amount') ?? 0.0;
-      goalTitle = prefs.getString('goal_title') ?? 'Моя первая мечта';
-      history = prefs.getStringList('history_list') ?? [];
-      if (imagePath != null && imagePath.isNotEmpty) {
-        _imageFile = File(imagePath);
+      for (int i = 0; i < 2; i++) {
+        goals[i].currentAmount = prefs.getDouble('current_amount_$i') ?? 0.0;
+        goals[i].targetAmount = prefs.getDouble('target_amount_$i') ?? 0.0;
+        goals[i].goalTitle = prefs.getString('goal_title_$i') ?? (i == 0 ? 'Моя первая мечта' : 'Вторая мечта');
+        goals[i].history = prefs.getStringList('history_list_$i') ?? [];
+        goals[i].imagePath = prefs.getString('goal_image_path_$i');
       }
     });
+  }
+
+  Future<void> _saveGoalData(int index) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('current_amount_$index', goals[index].currentAmount);
+    await prefs.setDouble('target_amount_$index', goals[index].targetAmount);
+    await prefs.setString('goal_title_$index', goals[index].goalTitle);
+    await prefs.setStringList('history_list_$index', goals[index].history);
+    if (goals[index].imagePath != null) {
+      await prefs.setString('goal_image_path_$index', goals[index].imagePath!);
+    }
   }
 
   Future<void> _pickImage() async {
     final XFile? picked = await _picker.pickImage(source: ImageSource.gallery);
     if (picked != null) {
       setState(() {
-        _imageFile = File(picked.path);
+        goals[currentGoalIndex].imagePath = picked.path;
       });
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('goal_image_path', picked.path);
+      _saveGoalData(currentGoalIndex);
     }
   }
 
   Future<void> _updateMoney(double delta) async {
     setState(() {
-      currentAmount += delta;
-      if (currentAmount < 0) currentAmount = 0;
+      goals[currentGoalIndex].currentAmount += delta;
+      if (goals[currentGoalIndex].currentAmount < 0) {
+        goals[currentGoalIndex].currentAmount = 0;
+      }
       final type = delta > 0 ? '+' : '-';
       final entry = '$type ${delta.abs().toStringAsFixed(0)} ₽';
-      history.insert(0, entry);
+      goals[currentGoalIndex].history.insert(0, entry);
     });
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('current_amount', currentAmount);
-    await prefs.setStringList('history_list', history);
-
+    _saveGoalData(currentGoalIndex);
     _checkGoalReached();
   }
 
   void _checkGoalReached() {
-    if (targetAmount > 0 && currentAmount >= targetAmount) {
+    final goal = goals[currentGoalIndex];
+    if (goal.targetAmount > 0 && goal.currentAmount >= goal.targetAmount) {
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -468,12 +539,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _updateGoal(String newTitle, double newTarget) async {
     setState(() {
-      goalTitle = newTitle;
-      targetAmount = newTarget;
+      goals[currentGoalIndex].goalTitle = newTitle;
+      goals[currentGoalIndex].targetAmount = newTarget;
     });
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('goal_title', goalTitle);
-    await prefs.setDouble('target_amount', targetAmount);
+    _saveGoalData(currentGoalIndex);
   }
 
   void _showComingSoonBottomSheet(String title, String description) {
@@ -597,8 +666,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showEditGoalModal() {
-    final titleController = TextEditingController(text: goalTitle);
-    final targetController = TextEditingController(text: targetAmount.toStringAsFixed(0));
+    final goal = goals[currentGoalIndex];
+    final titleController = TextEditingController(text: goal.goalTitle);
+    final targetController = TextEditingController(text: goal.targetAmount.toStringAsFixed(0));
 
     showModalBottomSheet(
       context: context,
@@ -619,7 +689,7 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Изменить цель', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              Text('Изменить цель ${currentGoalIndex + 1}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
               TextField(
                 controller: titleController,
@@ -649,7 +719,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   onPressed: () {
                     final newTitle = titleController.text.trim();
-                    final newTarget = double.tryParse(targetController.text.trim()) ?? targetAmount;
+                    final newTarget = double.tryParse(targetController.text.trim()) ?? goal.targetAmount;
                     if (newTitle.isNotEmpty && newTarget >= 0) {
                       _updateGoal(newTitle, newTarget);
                       Navigator.pop(context);
@@ -666,7 +736,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showTransactionBottomSheet(bool isAdding) {
-    if (targetAmount <= 0) {
+    final goal = goals[currentGoalIndex];
+    if (goal.targetAmount <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Сначала укажите цену мечты!')),
       );
@@ -694,7 +765,7 @@ class _HomeScreenState extends State<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                isAdding ? 'Пополнить копилку' : 'Потратил из копилки',
+                isAdding ? 'Пополнить копилку' : 'Потратить из копилки',
                 style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 16),
@@ -738,10 +809,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final appState = MyApp.of(context)!;
     final isDark = appState.isDark;
+    final fullName = widget.userLastName.isNotEmpty ? '${widget.userName} ${widget.userLastName}' : widget.userName;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.userName, style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(fullName, style: const TextStyle(fontWeight: FontWeight.bold)),
         flexibleSpace: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -755,15 +827,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         actions: [
-          // Исправленная иконка калькулятора (теперь открывает калькулятор/модальное окно расчетов)
-          IconButton(
-            icon: const Icon(Icons.calculate_outlined),
-            onPressed: () => _showComingSoonBottomSheet(
-              'Калькулятор',
-              'Расчет необходимых ежедневных сбережений для достижения цели появится совсем скоро!',
-            ),
-          ),
-          // Иконка таблицы лидеров (отдельная кнопка)
+          // Калькулятор убран согласно заданию
           IconButton(
             icon: const Icon(Icons.leaderboard_outlined),
             onPressed: () => _showComingSoonBottomSheet(
@@ -782,62 +846,98 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  if (!isDark)
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                ],
-              ),
-              child: Column(
-                children: [
-                  GestureDetector(
-                    onTap: _pickImage,
-                    child: _imageFile != null
-                        ? ClipRRect(
-                            borderRadius: BorderRadius.circular(16),
-                            child: Image.file(_imageFile!, fit: BoxFit.contain),
-                          )
-                        : Container(
-                            height: 140,
-                            width: double.infinity,
-                            decoration: BoxDecoration(
-                              color: appState.primaryColor.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(16),
+            // Свайпаемый блок двух целей
+            SizedBox(
+              height: 270,
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: 2,
+                onPageChanged: (index) {
+                  setState(() {
+                    currentGoalIndex = index;
+                  });
+                },
+                itemBuilder: (context, index) {
+                  final goal = goals[index];
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                        borderRadius: BorderRadius.circular(24),
+                        boxShadow: [
+                          if (!isDark)
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.04),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
                             ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.add_a_photo_outlined, color: appState.primaryColor, size: 36),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Нажмите, чтобы выбрать фото цели',
-                                  style: TextStyle(color: appState.primaryColor, fontSize: 12, fontWeight: FontWeight.bold),
-                                ),
-                              ],
+                        ],
+                      ),
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: _pickImage,
+                              child: goal.imagePath != null
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(16),
+                                      child: Image.file(File(goal.imagePath!), fit: BoxFit.contain, width: double.infinity),
+                                    )
+                                  : Container(
+                                      width: double.infinity,
+                                      decoration: BoxDecoration(
+                                        color: appState.primaryColor.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(16),
+                                      ),
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.add_a_photo_outlined, color: appState.primaryColor, size: 36),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            'Цель ${index + 1}: Нажмите для фото',
+                                            style: TextStyle(color: appState.primaryColor, fontSize: 12, fontWeight: FontWeight.bold),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                             ),
                           ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    goalTitle,
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '${currentAmount.toInt()} / ${targetAmount.toInt()} ₽',
-                    style: TextStyle(fontSize: 22, color: appState.primaryColor, fontWeight: FontWeight.bold),
-                  ),
-                ],
+                          const SizedBox(height: 12),
+                          Text(
+                            goal.goalTitle,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ₽',
+                            style: TextStyle(fontSize: 18, color: appState.primaryColor, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
               ),
+            ),
+            const SizedBox(height: 10),
+            // Индикатор точек для свайпа целей
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(2, (index) {
+                return Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: currentGoalIndex == index ? 16 : 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: currentGoalIndex == index ? appState.primaryColor : Colors.grey.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                );
+              }),
             ),
             const SizedBox(height: 16),
 
@@ -901,7 +1001,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                 borderRadius: BorderRadius.circular(20),
               ),
-              child: history.isEmpty
+              child: goals[currentGoalIndex].history.isEmpty
                   ? const Center(
                       child: Padding(
                         padding: EdgeInsets.symmetric(vertical: 12.0),
@@ -914,10 +1014,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   : ListView.separated(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      itemCount: history.length,
+                      itemCount: goals[currentGoalIndex].history.length,
                       separatorBuilder: (context, index) => const Divider(height: 16),
                       itemBuilder: (context, index) {
-                        final item = history[index];
+                        final item = goals[currentGoalIndex].history[index];
                         final isAdd = item.startsWith('+');
                         return Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1029,7 +1129,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 24),
 
-            // Строка с версией приложения в самом низу (как в Телеграме)
+            // Строка с версией приложения в самом низу
             const Center(
               child: Text(
                 'Я Коплю: мечты v.2.3 (beta)',
