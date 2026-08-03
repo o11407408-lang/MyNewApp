@@ -46,7 +46,6 @@ class _MyAppState extends State<MyApp> {
   late String userName;
   late bool isRegistered;
 
-  // 6 & 7. Палитра по цветам радуги (Красный, Оранжевый, Зеленый, Голубой, Синий, Фиолетовый)
   final List<Color> lightColors = [
     Colors.red,
     Colors.orange,
@@ -180,7 +179,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 child: Icon(Icons.savings_outlined, size: 36, color: appState.primaryColor),
               ),
               const SizedBox(height: 16),
-              // 9. Все тексты с заглавной буквы
               const Text(
                 'Добро пожаловать в\n«Я коплю»',
                 textAlign: TextAlign.center,
@@ -223,7 +221,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   children: [
                     const Text('Давай знакомиться', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                     const SizedBox(height: 12),
-                    // 12. Поле только для имени
                     TextField(
                       controller: _nameController,
                       decoration: InputDecoration(
@@ -234,7 +231,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     const SizedBox(height: 14),
                     const Text('Выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
                     const SizedBox(height: 10),
-                    // 7 & 12. Динамическое изменение цвета при нажатии
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: List.generate(
@@ -366,7 +362,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   double currentAmount = 0.0;
-  // 10. Изначальная цена мечты — 0 рублей
   double targetAmount = 0.0;
   String goalTitle = 'Моя первая мечта';
   List<String> history = [];
@@ -394,7 +389,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // 2. Исправленный выбор фото из галереи
   Future<void> _pickImage() async {
     final XFile? picked = await _picker.pickImage(source: ImageSource.gallery);
     if (picked != null) {
@@ -421,7 +415,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _checkGoalReached();
   }
 
-  // 11. Поздравление на весь экран
   void _checkGoalReached() {
     if (targetAmount > 0 && currentAmount >= targetAmount) {
       showDialog(
@@ -483,6 +476,51 @@ class _HomeScreenState extends State<HomeScreen> {
     await prefs.setDouble('target_amount', targetAmount);
   }
 
+  void _showComingSoonBottomSheet(String title, String description) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.hourglass_top_rounded, size: 48, color: appState.primaryColor),
+              const SizedBox(height: 12),
+              const Text('Скоро появится', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
+              const SizedBox(height: 8),
+              Text(
+                description,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _showSettingsModal() {
     showModalBottomSheet(
       context: context,
@@ -497,12 +535,10 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 1. Убраны все эмодзи
               const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
               const Text('Выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
               const SizedBox(height: 12),
-              // 7. Расположение по цветам радуги
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: List.generate(
@@ -530,6 +566,28 @@ class _HomeScreenState extends State<HomeScreen> {
                   appState.toggleTheme(val);
                   Navigator.pop(context);
                 },
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    appState.resetAllData();
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (context) => const OnboardingScreen()),
+                    );
+                  },
+                  icon: const Icon(Icons.delete_forever_outlined),
+                  label: const Text('Сбросить все настройки', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
               ),
             ],
           ),
@@ -561,7 +619,6 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 1. Убраны все эмодзи
               const Text('Изменить цель', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
               TextField(
@@ -609,7 +666,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showTransactionBottomSheet(bool isAdding) {
-    // 10. Если цена мечты равен 0 — запрещаем ввод и показываем уведомление
     if (targetAmount <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Сначала укажите цену мечты!')),
@@ -637,7 +693,6 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 1. Убраны все эмодзи
               Text(
                 isAdding ? 'Пополнить копилку' : 'Потратил из копилки',
                 style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
@@ -687,7 +742,26 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.userName, style: const TextStyle(fontWeight: FontWeight.bold)),
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                Colors.red.withOpacity(0.35),
+                isDark ? const Color(0xFF121212) : const Color(0xFFFBF8FF),
+              ],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
+          ),
+        ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.calculate_outlined),
+            onPressed: () => _showComingSoonBottomSheet(
+              'Таблица лидеров',
+              'Сравнение накоплений и достижения других пользователей скоро появятся!',
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             onPressed: _showSettingsModal,
@@ -699,7 +773,6 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Карточка цели
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
@@ -717,7 +790,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               child: Column(
                 children: [
-                  // 3. Динамическая подстройка под пропорции картинки (16:9, квадрат и т.д.)
                   GestureDetector(
                     onTap: _pickImage,
                     child: _imageFile != null
@@ -746,7 +818,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                   ),
                   const SizedBox(height: 16),
-                  // 8. Название мечты без карандаша
                   Text(
                     goalTitle,
                     style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
@@ -761,7 +832,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 16),
 
-            // 8. Блок кнопок: Пополнить, Уменьшенная Потратил, и Круглая Изменить
             Row(
               children: [
                 Expanded(
@@ -781,7 +851,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                // 4 & 8. Прозрачная кнопка с динамической обводкой в цвет темы
                 Expanded(
                   flex: 2,
                   child: SizedBox(
@@ -801,7 +870,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                // 8. Круглая кнопка изменения темы с карандашиком
                 GestureDetector(
                   onTap: _showEditGoalModal,
                   child: CircleAvatar(
@@ -815,7 +883,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 24),
 
-            // 5. История операций всегда на главном экране
             const Text('История операций', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             Container(
@@ -826,7 +893,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 borderRadius: BorderRadius.circular(20),
               ),
               child: history.isEmpty
-                  // 5. Текст если операций нет
                   ? const Center(
                       child: Padding(
                         padding: EdgeInsets.symmetric(vertical: 12.0),
@@ -862,6 +928,93 @@ class _HomeScreenState extends State<HomeScreen> {
                         );
                       },
                     ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // Карточки «Поддержать проект» и «Наш телеграм канал» (точь-в-точь по фото)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Column(
+                children: [
+                  const Icon(Icons.favorite, color: Colors.redAccent, size: 36),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Поддержать проект',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Приложение абсолютно бесплатное и без подписок!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 16),
+                  OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      side: BorderSide(color: isDark ? Colors.white38 : Colors.grey[700]!),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    ),
+                    onPressed: () => _showComingSoonBottomSheet(
+                      'Поддержать проект',
+                      'Возможность отправить донат разработчику появится в ближайшем обновлении!',
+                    ),
+                    child: Text(
+                      'Отправить донат',
+                      style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
+                    ),
+                  )
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Column(
+                children: [
+                  const Icon(Icons.send_rounded, color: Colors.redAccent, size: 36),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Наш телеграм канал',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Сообщайте о багах, делитесь идеями и следите за обновлениями!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 16),
+                  OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      side: BorderSide(color: isDark ? Colors.white38 : Colors.grey[700]!),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    ),
+                    onPressed: () => _showComingSoonBottomSheet(
+                      'Телеграм канал',
+                      'Наш официальный телеграм-канал с обновлениями откроется совсем скоро!',
+                    ),
+                    child: Text(
+                      'Сообщить о баге / Идеи',
+                      style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
+                    ),
+                  )
+                ],
+              ),
             ),
           ],
         ),
