@@ -746,7 +746,7 @@ class _HomeScreenState extends State<HomeScreen> {
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: [
-                Colors.red.withOpacity(0.35),
+                appState.primaryColor.withOpacity(0.35),
                 isDark ? const Color(0xFF121212) : const Color(0xFFFBF8FF),
               ],
               begin: Alignment.topCenter,
@@ -932,7 +932,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 24),
 
-            // Карточки «Поддержать проект» и «Наш телеграм канал» (точь-в-точь по фото)
+            // Карточка «Поддержать проект»
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -942,7 +942,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               child: Column(
                 children: [
-                  const Icon(Icons.favorite, color: Colors.redAccent, size: 36),
+                  Icon(Icons.favorite, color: appState.primaryColor, size: 36),
                   const SizedBox(height: 12),
                   const Text(
                     'Поддержать проект',
@@ -976,6 +976,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 16),
 
+            // Карточка «Наш телеграм канал»
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -985,7 +986,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               child: Column(
                 children: [
-                  const Icon(Icons.send_rounded, color: Colors.redAccent, size: 36),
+                  Icon(Icons.send_rounded, color: appState.primaryColor, size: 36),
                   const SizedBox(height: 12),
                   const Text(
                     'Наш телеграм канал',
