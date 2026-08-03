@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:share_plus/share_plus.dart';
 import 'dart:io';
 import 'dart:ui';
-import 'dart:math';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,6 +14,9 @@ void main() async {
   final savedLastName = prefs.getString('user_last_name') ?? '';
   final isDark = prefs.getBool('is_dark') ?? false;
   final colorIndex = prefs.getInt('color_index') ?? 0;
+  final hideName = prefs.getBool('hide_name') ?? false;
+  final hidePhoto = prefs.getBool('hide_photo') ?? false;
+  final hidePrice = prefs.getBool('hide_price') ?? false;
 
   runApp(MyApp(
     isRegistered: isRegistered,
@@ -20,6 +24,9 @@ void main() async {
     savedLastName: savedLastName,
     initialIsDark: isDark,
     initialColorIndex: colorIndex,
+    initialHideName: hideName,
+    initialHidePhoto: hidePhoto,
+    initialHidePrice: hidePrice,
   ));
 }
 
@@ -29,6 +36,9 @@ class MyApp extends StatefulWidget {
   final String savedLastName;
   final bool initialIsDark;
   final int initialColorIndex;
+  final bool initialHideName;
+  final bool initialHidePhoto;
+  final bool initialHidePrice;
 
   const MyApp({
     super.key,
@@ -37,6 +47,9 @@ class MyApp extends StatefulWidget {
     required this.savedLastName,
     required this.initialIsDark,
     required this.initialColorIndex,
+    required this.initialHideName,
+    required this.initialHidePhoto,
+    required this.initialHidePrice,
   });
 
   static _MyAppState? of(BuildContext context) =>
@@ -52,6 +65,9 @@ class _MyAppState extends State<MyApp> {
   late String userName;
   late String userLastName;
   late bool isRegistered;
+  late bool hideName;
+  late bool hidePhoto;
+  late bool hidePrice;
 
   final List<Color> lightColors = [
     Colors.red,
@@ -79,6 +95,9 @@ class _MyAppState extends State<MyApp> {
     userName = widget.savedName;
     userLastName = widget.savedLastName;
     isRegistered = widget.isRegistered;
+    hideName = widget.initialHideName;
+    hidePhoto = widget.initialHidePhoto;
+    hidePrice = widget.initialHidePrice;
   }
 
   Color get primaryColor =>
@@ -99,6 +118,34 @@ class _MyAppState extends State<MyApp> {
     });
     SharedPreferences.getInstance().then((prefs) {
       prefs.setInt('color_index', index);
+    });
+  }
+
+  void setHideName(bool value) {
+    setState(() => hideName = value);
+    SharedPreferences.getInstance().then((prefs) => prefs.setBool('hide_name', value));
+  }
+
+  void setHidePhoto(bool value) {
+    setState(() => hidePhoto = value);
+    SharedPreferences.getInstance().then((prefs) => prefs.setBool('hide_photo', value));
+  }
+
+  void setHidePrice(bool value) {
+    setState(() => hidePrice = value);
+    SharedPreferences.getInstance().then((prefs) => prefs.setBool('hide_price', value));
+  }
+
+  void setHideAll(bool value) {
+    setState(() {
+      hideName = value;
+      hidePhoto = value;
+      hidePrice = value;
+    });
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setBool('hide_name', value);
+      prefs.setBool('hide_photo', value);
+      prefs.setBool('hide_price', value);
     });
   }
 
@@ -123,6 +170,9 @@ class _MyAppState extends State<MyApp> {
       userLastName = '';
       isDark = false;
       selectedColorIndex = 0;
+      hideName = false;
+      hidePhoto = false;
+      hidePrice = false;
     });
   }
 
@@ -159,6 +209,24 @@ Route createAnimatedRoute(Widget page) {
       );
     },
     transitionDuration: const Duration(milliseconds: 300),
+  );
+}
+
+Widget fullscreenDialogShell(BuildContext context, Widget child) {
+  final isDark = MyApp.of(context)!.isDark;
+  final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
+  return AnnotatedRegion<SystemUiOverlayStyle>(
+    value: SystemUiOverlayStyle(
+      statusBarColor: bgColor,
+      statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+      statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
+    ),
+    child: Container(
+      width: double.infinity,
+      height: double.infinity,
+      color: bgColor,
+      child: child,
+    ),
   );
 }
 
@@ -402,6 +470,8 @@ class GoalData {
   String goalTitle;
   List<String> history;
   String? imagePath;
+  double? dailyAllowance;
+  String currency;
 
   GoalData({
     required this.currentAmount,
@@ -409,6 +479,8 @@ class GoalData {
     required this.goalTitle,
     required this.history,
     this.imagePath,
+    this.dailyAllowance,
+    this.currency = '₽',
   });
 }
 
@@ -449,6 +521,8 @@ class _HomeScreenState extends State<HomeScreen> {
         goals[i].goalTitle = prefs.getString('goal_title_$i') ?? (i == 0 ? 'Моя первая мечта' : 'Вторая мечта');
         goals[i].history = prefs.getStringList('history_list_$i') ?? [];
         goals[i].imagePath = prefs.getString('goal_image_path_$i');
+        goals[i].dailyAllowance = prefs.containsKey('daily_allowance_$i') ? prefs.getDouble('daily_allowance_$i') : null;
+        goals[i].currency = prefs.getString('goal_currency_$i') ?? '₽';
       }
     });
   }
@@ -462,6 +536,12 @@ class _HomeScreenState extends State<HomeScreen> {
     if (goals[index].imagePath != null) {
       await prefs.setString('goal_image_path_$index', goals[index].imagePath!);
     }
+    if (goals[index].dailyAllowance != null) {
+      await prefs.setDouble('daily_allowance_$index', goals[index].dailyAllowance!);
+    } else {
+      await prefs.remove('daily_allowance_$index');
+    }
+    await prefs.setString('goal_currency_$index', goals[index].currency);
   }
 
   Future<void> _pickImage() async {
@@ -481,11 +561,30 @@ class _HomeScreenState extends State<HomeScreen> {
         goals[currentGoalIndex].currentAmount = 0;
       }
       final type = delta > 0 ? '+' : '-';
-      final entry = '$type ${delta.abs().toStringAsFixed(0)} ₽';
+      final entry = '$type ${delta.abs().toStringAsFixed(0)} ${goals[currentGoalIndex].currency}';
       goals[currentGoalIndex].history.insert(0, entry);
     });
     _saveGoalData(currentGoalIndex);
     _checkGoalReached();
+  }
+
+  void _quickAdd(double amount) {
+    final goal = goals[currentGoalIndex];
+    if (goal.targetAmount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Сначала укажите цену мечты!')),
+      );
+      return;
+    }
+    _updateMoney(amount);
+  }
+
+  void _shareApp() {
+    const shareText =
+        'привет! я пользуюсь этим приложением. присоединяйся!\n'
+        'Я Коплю: мечты\n'
+        'https://drive.google.com/YOUR_APK_LINK_HERE';
+    Share.share(shareText);
   }
 
   void _checkGoalReached() {
@@ -497,40 +596,43 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (context) {
           final appState = MyApp.of(context)!;
           return Dialog.fullscreen(
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Spacer(),
-                    Icon(Icons.emoji_events_rounded, size: 100, color: appState.primaryColor),
-                    const SizedBox(height: 24),
-                    Text(
-                      'Поздравляю с достижением цели, ${widget.userName}',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'ты молодец!',
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                    const Spacer(),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: appState.primaryColor,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        ),
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Ура!', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            child: fullscreenDialogShell(
+              context,
+              SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Spacer(),
+                      Icon(Icons.emoji_events_rounded, size: 100, color: appState.primaryColor),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Поздравляю с достижением цели, ${widget.userName}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 12),
+                      const Text(
+                        'ты молодец!',
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                      const Spacer(),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: appState.primaryColor,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          ),
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Ура!', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -540,10 +642,14 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _updateGoal(String newTitle, double newTarget) async {
+  Future<void> _updateGoal(String newTitle, double newTarget, {double? dailyAllowance, String? currency}) async {
     setState(() {
       goals[currentGoalIndex].goalTitle = newTitle;
       goals[currentGoalIndex].targetAmount = newTarget;
+      goals[currentGoalIndex].dailyAllowance = dailyAllowance;
+      if (currency != null) {
+        goals[currentGoalIndex].currency = currency;
+      }
     });
     _saveGoalData(currentGoalIndex);
   }
@@ -596,73 +702,152 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showSettingsModal() {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              const Text('Выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: List.generate(
-                  appState.lightColors.length,
-                  (index) => GestureDetector(
-                    onTap: () {
-                      appState.setColor(index);
-                      Navigator.pop(context);
-                    },
-                    child: CircleAvatar(
-                      radius: 18,
-                      backgroundColor: appState.isDark ? appState.darkColors[index] : appState.lightColors[index],
-                      child: appState.selectedColorIndex == index
-                          ? const Icon(Icons.check, color: Colors.white, size: 18)
-                          : null,
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+                top: 24,
+                left: 24,
+                right: 24,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 16),
+                    const Text('Выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: List.generate(
+                        appState.lightColors.length,
+                        (index) => GestureDetector(
+                          onTap: () {
+                            appState.setColor(index);
+                            Navigator.pop(context);
+                          },
+                          child: CircleAvatar(
+                            radius: 18,
+                            backgroundColor: appState.isDark ? appState.darkColors[index] : appState.lightColors[index],
+                            child: appState.selectedColorIndex == index
+                                ? const Icon(Icons.check, color: Colors.white, size: 18)
+                                : null,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Тёмная тема'),
+                      value: appState.isDark,
+                      onChanged: (val) {
+                        appState.toggleTheme(val);
+                        Navigator.pop(context);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    const Divider(),
+                    const SizedBox(height: 4),
+                    const Text('Режим конфиденциальности', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+                    const SizedBox(height: 2),
+                    const Text(
+                      'Скрывает выбранные данные на скриншотах и записи экрана',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                    SwitchListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Скрыть название'),
+                      value: appState.hideName,
+                      onChanged: (val) {
+                        appState.setHideName(val);
+                        setModalState(() {});
+                      },
+                    ),
+                    SwitchListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Скрыть фото'),
+                      value: appState.hidePhoto,
+                      onChanged: (val) {
+                        appState.setHidePhoto(val);
+                        setModalState(() {});
+                      },
+                    ),
+                    SwitchListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Скрыть цену'),
+                      value: appState.hidePrice,
+                      onChanged: (val) {
+                        appState.setHidePrice(val);
+                        setModalState(() {});
+                      },
+                    ),
+                    SwitchListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Скрыть всё'),
+                      value: appState.hideName && appState.hidePhoto && appState.hidePrice,
+                      onChanged: (val) {
+                        appState.setHideAll(val);
+                        setModalState(() {});
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    const Divider(),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: appState.primaryColor,
+                          side: BorderSide(color: appState.primaryColor),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: _shareApp,
+                        icon: const Icon(Icons.share_outlined),
+                        label: const Text('Поделиться приложением', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red,
+                          side: const BorderSide(color: Colors.red),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () {
+                          Navigator.pop(context);
+                          appState.resetAllData();
+                          Navigator.pushReplacement(
+                            context,
+                            MaterialPageRoute(builder: (context) => const OnboardingScreen()),
+                          );
+                        },
+                        icon: const Icon(Icons.delete_forever_outlined),
+                        label: const Text('Сбросить все настройки', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 20),
-              SwitchListTile(
-                title: const Text('Тёмная тема'),
-                value: appState.isDark,
-                onChanged: (val) {
-                  appState.toggleTheme(val);
-                  Navigator.pop(context);
-                },
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.red,
-                    side: const BorderSide(color: Colors.red),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  ),
-                  onPressed: () {
-                    Navigator.pop(context);
-                    appState.resetAllData();
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (context) => const OnboardingScreen()),
-                    );
-                  },
-                  icon: const Icon(Icons.delete_forever_outlined),
-                  label: const Text('Сбросить все настройки', style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -672,6 +857,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final goal = goals[currentGoalIndex];
     final titleController = TextEditingController(text: goal.goalTitle);
     final targetController = TextEditingController(text: goal.targetAmount.toStringAsFixed(0));
+    final allowanceController = TextEditingController(
+      text: goal.dailyAllowance != null ? goal.dailyAllowance!.toStringAsFixed(0) : '',
+    );
+    String selectedCurrency = goal.currency;
 
     showModalBottomSheet(
       context: context,
@@ -681,58 +870,103 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-            top: 24,
-            left: 24,
-            right: 24,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Изменить цель ${currentGoalIndex + 1}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 16),
-              TextField(
-                controller: titleController,
-                decoration: InputDecoration(
-                  labelText: 'Название цели',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+                top: 24,
+                left: 24,
+                right: 24,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Изменить цель ${currentGoalIndex + 1}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: titleController,
+                      decoration: InputDecoration(
+                        labelText: 'Название цели',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: targetController,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: 'Целевая сумма',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text('Валюта цели', style: TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w400)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: ['₽', '€', '\$'].map((cur) {
+                        final selected = cur == selectedCurrency;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: GestureDetector(
+                            onTap: () => setModalState(() => selectedCurrency = cur),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: selected ? appState.primaryColor : appState.primaryColor.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Text(
+                                cur,
+                                style: TextStyle(
+                                  color: selected ? Colors.white : appState.primaryColor,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: allowanceController,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: 'Карманные в день (необязательно)',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: appState.primaryColor,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () {
+                          final newTitle = titleController.text.trim();
+                          final newTarget = double.tryParse(targetController.text.trim()) ?? goal.targetAmount;
+                          final allowanceText = allowanceController.text.trim();
+                          final newAllowance = allowanceText.isEmpty ? null : double.tryParse(allowanceText);
+                          if (newTitle.isNotEmpty && newTarget >= 0) {
+                            _updateGoal(newTitle, newTarget, dailyAllowance: newAllowance, currency: selectedCurrency);
+                            Navigator.pop(context);
+                          }
+                        },
+                        child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: targetController,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: 'Целевая сумма (в рублях)',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: appState.primaryColor,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  ),
-                  onPressed: () {
-                    final newTitle = titleController.text.trim();
-                    final newTarget = double.tryParse(targetController.text.trim()) ?? goal.targetAmount;
-                    if (newTitle.isNotEmpty && newTarget >= 0) {
-                      _updateGoal(newTitle, newTarget);
-                      Navigator.pop(context);
-                    }
-                  },
-                  child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -777,7 +1011,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 keyboardType: TextInputType.number,
                 autofocus: true,
                 decoration: InputDecoration(
-                  labelText: 'Сумма (в рублях)',
+                  labelText: 'Сумма',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                 ),
               ),
@@ -794,9 +1028,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: () {
                     final val = double.tryParse(controller.text.trim()) ?? 0;
                     if (val > 0) {
-                      // Сначала закрываем окно ввода суммы, и только потом
-                      // обновляем баланс — иначе диалог поздравления с целью
-                      // мог закрыться раньше времени, а это окно оставалось открытым.
                       Navigator.pop(context);
                       _updateMoney(isAdding ? val : -val);
                     }
@@ -826,44 +1057,40 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context) {
         final appState = MyApp.of(context)!;
         return Dialog.fullscreen(
-          child: Stack(
-            children: [
-              SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.all(24.0),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Spacer(),
-                      const Text('🏝️', style: TextStyle(fontSize: 72)),
-                      const SizedBox(height: 24),
-                      const Text(
-                        'Марат, главный разработчик этого приложения, заслуживает отдых на Бали',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                      ),
-                      const Spacer(),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 52,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: appState.primaryColor,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          ),
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Согласен', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          child: fullscreenDialogShell(
+            context,
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Spacer(),
+                    const Text('🏝️', style: TextStyle(fontSize: 72)),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Марат, главный разработчик этого приложения, заслуживает отдых на Бали',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                    ),
+                    const Spacer(),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: appState.primaryColor,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                         ),
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Согласен', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
-              const IgnorePointer(
-                child: _EmojiConfetti(),
-              ),
-            ],
+            ),
           ),
         );
       },
@@ -892,7 +1119,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         actions: [
-          // Калькулятор убран согласно заданию
           IconButton(
             icon: const Icon(Icons.leaderboard_outlined),
             onPressed: () => _showComingSoonBottomSheet(
@@ -911,9 +1137,8 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Свайпаемый блок двух целей
             SizedBox(
-              height: 270,
+              height: 300,
               child: PageView.builder(
                 controller: _pageController,
                 itemCount: 2,
@@ -947,32 +1172,49 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: GestureDetector(
                               onTap: _pickImage,
                               child: goal.imagePath != null
-                                  ? ClipRRect(
-                                      borderRadius: BorderRadius.circular(16),
-                                      child: Stack(
-                                        fit: StackFit.expand,
-                                        children: [
-                                          // Размытая увеличенная копия фото — заполняет весь блок
-                                          Image.file(
-                                            File(goal.imagePath!),
-                                            fit: BoxFit.cover,
+                                  ? (appState.hidePhoto
+                                      ? Container(
+                                          width: double.infinity,
+                                          decoration: BoxDecoration(
+                                            color: appState.primaryColor.withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(16),
                                           ),
-                                          BackdropFilter(
-                                            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                                            child: Container(
-                                              color: Colors.black.withOpacity(0.12),
-                                            ),
+                                          child: Column(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              Icon(Icons.lock_outline_rounded, color: appState.primaryColor, size: 36),
+                                              const SizedBox(height: 8),
+                                              Text(
+                                                'Фото скрыто',
+                                                style: TextStyle(color: appState.primaryColor, fontSize: 12, fontWeight: FontWeight.bold),
+                                              ),
+                                            ],
                                           ),
-                                          // Чёткое фото поверх, без обрезки
-                                          Center(
-                                            child: Image.file(
-                                              File(goal.imagePath!),
-                                              fit: BoxFit.contain,
-                                            ),
+                                        )
+                                      : ClipRRect(
+                                          borderRadius: BorderRadius.circular(16),
+                                          child: Stack(
+                                            fit: StackFit.expand,
+                                            children: [
+                                              Image.file(
+                                                File(goal.imagePath!),
+                                                fit: BoxFit.cover,
+                                              ),
+                                              BackdropFilter(
+                                                filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                                                child: Container(
+                                                  color: Colors.black.withOpacity(0.12),
+                                                ),
+                                              ),
+                                              Center(
+                                                child: Image.file(
+                                                  File(goal.imagePath!),
+                                                  fit: BoxFit.contain,
+                                                ),
+                                              ),
+                                            ],
                                           ),
-                                        ],
-                                      ),
-                                    )
+                                        ))
                                   : Container(
                                       width: double.infinity,
                                       decoration: BoxDecoration(
@@ -995,14 +1237,25 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            goal.goalTitle,
+                            appState.hideName ? '••••' : goal.goalTitle,
                             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ₽',
+                            appState.hidePrice
+                                ? '•••• / •••• ${goal.currency}'
+                                : '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ${goal.currency}',
                             style: TextStyle(fontSize: 18, color: appState.primaryColor, fontWeight: FontWeight.bold),
                           ),
+                          if (goal.dailyAllowance != null && goal.dailyAllowance! > 0) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              appState.hidePrice
+                                  ? 'Карманные: ••••'
+                                  : 'Карманные: ${goal.dailyAllowance!.toInt()} ${goal.currency}/день',
+                              style: const TextStyle(fontSize: 11, color: Colors.grey),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -1011,7 +1264,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: 10),
-            // Индикатор точек для свайпа целей
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: List.generate(2, (index) {
@@ -1027,7 +1279,6 @@ class _HomeScreenState extends State<HomeScreen> {
               }),
             ),
             const SizedBox(height: 16),
-
             Row(
               children: [
                 Expanded(
@@ -1076,9 +1327,29 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ],
             ),
-
+            const SizedBox(height: 12),
+            Row(
+              children: <int>[100, 500, 1000].map((amount) {
+                return Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        side: BorderSide(color: appState.primaryColor.withOpacity(0.5)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      onPressed: () => _quickAdd(amount.toDouble()),
+                      child: Text(
+                        '+$amount ${goals[currentGoalIndex].currency}',
+                        style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
             const SizedBox(height: 24),
-
             const Text('История операций', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             Container(
@@ -1125,10 +1396,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                     ),
             ),
-
             const SizedBox(height: 24),
-
-            // Карточка «Поддержать проект»
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -1169,10 +1437,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 16),
-
-            // Карточка «Наш телеграм канал»
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -1213,10 +1478,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 24),
-
-            // Строка с версией приложения в самом низу — 5 тапов открывают пасхалку
             Center(
               child: GestureDetector(
                 onTap: _handleVersionTap,
@@ -1237,82 +1499,4 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-}
-
-/// Пасхалка: лёгкий "салют" из плавающих эмодзи для диалога про отдых на Бали.
-class _EmojiConfetti extends StatefulWidget {
-  const _EmojiConfetti();
-
-  @override
-  State<_EmojiConfetti> createState() => _EmojiConfettiState();
-}
-
-class _EmojiConfettiState extends State<_EmojiConfetti> with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  final List<_ConfettiPiece> _pieces = [];
-  final _random = Random();
-
-  static const _emojis = ['🎉', '🌴', '🍹', '✈️', '🏝️', '☀️', '🎊', '🌊'];
-
-  @override
-  void initState() {
-    super.initState();
-    _pieces.addAll(List.generate(22, (index) {
-      return _ConfettiPiece(
-        emoji: _emojis[_random.nextInt(_emojis.length)],
-        left: _random.nextDouble(),
-        delay: _random.nextDouble(),
-        size: 22 + _random.nextDouble() * 22,
-      );
-    }));
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 4),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        return Stack(
-          children: _pieces.map((piece) {
-            final t = (_controller.value + piece.delay) % 1.0;
-            final top = -40 + t * (size.height + 80);
-            final opacity = t < 0.85 ? 1.0 : ((1.0 - t) / 0.15).clamp(0.0, 1.0);
-            return Positioned(
-              left: piece.left * size.width,
-              top: top,
-              child: Opacity(
-                opacity: opacity,
-                child: Text(piece.emoji, style: TextStyle(fontSize: piece.size)),
-              ),
-            );
-          }).toList(),
-        );
-      },
-    );
-  }
-}
-
-class _ConfettiPiece {
-  final String emoji;
-  final double left;
-  final double delay;
-  final double size;
-
-  _ConfettiPiece({
-    required this.emoji,
-    required this.left,
-    required this.delay,
-    required this.size,
-  });
 }
