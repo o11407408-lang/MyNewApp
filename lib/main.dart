@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -44,7 +43,6 @@ class _MyAppState extends State<MyApp> {
   late int selectedColorIndex;
   late String userName;
   late bool isRegistered;
-  bool isRainbowMode = false;
 
   final List<Color> lightColors = [
     Colors.deepPurple,
@@ -94,12 +92,6 @@ class _MyAppState extends State<MyApp> {
     });
   }
 
-  void enableRainbowMode() {
-    setState(() {
-      isRainbowMode = true;
-    });
-  }
-
   void registerUser(String name) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('user_name', name);
@@ -107,6 +99,17 @@ class _MyAppState extends State<MyApp> {
     setState(() {
       userName = name;
       isRegistered = true;
+    });
+  }
+
+  void resetAllData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    setState(() {
+      isRegistered = false;
+      userName = '';
+      isDark = false;
+      selectedColorIndex = 0;
     });
   }
 
@@ -118,7 +121,7 @@ class _MyAppState extends State<MyApp> {
       theme: ThemeData(
         brightness: isDark ? Brightness.dark : Brightness.light,
         scaffoldBackgroundColor: isDark ? const Color(0xFF121212) : const Color(0xFFFBF8FF),
-        colorSchemeSeed: isRainbowMode ? Colors.purple : primaryColor,
+        colorSchemeSeed: primaryColor,
         useMaterial3: true,
       ),
       home: isRegistered
@@ -155,7 +158,6 @@ class OnboardingScreen extends StatefulWidget {
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
   final _nameController = TextEditingController();
-  final _lastNameController = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
@@ -201,8 +203,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     _buildFeatureItem(Icons.image_outlined, 'Визуализация мечты', 'Добавляй фото целей из галереи.', appState.primaryColor),
                     const Divider(height: 16),
                     _buildFeatureItem(Icons.palette_outlined, 'Дизайн и темы', 'Material You палитра под настроение.', appState.primaryColor),
-                    const Divider(height: 16),
-                    _buildFeatureItem(Icons.all_inclusive, 'Без подписок', 'Весь функционал абсолютно бесплатен.', appState.primaryColor),
                   ],
                 ),
               ),
@@ -223,14 +223,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       controller: _nameController,
                       decoration: InputDecoration(
                         labelText: 'Ваше имя *',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _lastNameController,
-                      decoration: InputDecoration(
-                        labelText: 'Фамилия (необязательно)',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                     ),
@@ -399,6 +391,85 @@ class _HomeScreenState extends State<HomeScreen> {
     await prefs.setStringList('history_list', history);
   }
 
+  Future<void> _updateGoal(String newTitle, double newTarget) async {
+    setState(() {
+      goalTitle = newTitle;
+      targetAmount = newTarget;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('goal_title', goalTitle);
+    await prefs.setDouble('target_amount', targetAmount);
+  }
+
+  void _showEditGoalModal() {
+    final titleController = TextEditingController(text: goalTitle);
+    final targetController = TextEditingController(text: targetAmount.toStringAsFixed(0));
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            top: 24,
+            left: 24,
+            right: 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Изменить цель ✏️', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              TextField(
+                controller: titleController,
+                decoration: InputDecoration(
+                  labelText: 'Название цели',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: targetController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Целевая сумма (в рублях)',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () {
+                    final newTitle = titleController.text.trim();
+                    final newTarget = double.tryParse(targetController.text.trim()) ?? targetAmount;
+                    if (newTitle.isNotEmpty && newTarget > 0) {
+                      _updateGoal(newTitle, newTarget);
+                      Navigator.pop(context);
+                    }
+                  },
+                  child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _showTransactionBottomSheet(bool isAdding) {
     final controller = TextEditingController();
     showModalBottomSheet(
@@ -461,6 +532,175 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _showComingSoonBottomSheet(String title, String description) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.hourglass_top_rounded, size: 48, color: appState.primaryColor),
+              const SizedBox(height: 12),
+              const Text('Скоро появится 🚀', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
+              const SizedBox(height: 8),
+              Text(
+                description,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно'),
+                ),
+              )
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showLeaderboardBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.leaderboard_rounded, size: 48, color: appState.primaryColor),
+              const SizedBox(height: 12),
+              const Text('Таблица лидеров 🏆', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 20),
+              const Text(
+                'пока никто не задонатил',
+                style: TextStyle(fontSize: 15, color: Colors.grey, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Закрыть'),
+                ),
+              )
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showSettingsBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            final appState = MyApp.of(context)!;
+            final isDark = appState.isDark;
+
+            return Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Настройки ⚙️', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Тёмная тема', style: TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: const Text('Использовать тёмное оформление'),
+                    value: isDark,
+                    onChanged: (val) {
+                      appState.toggleTheme(val);
+                      setModalState(() {});
+                    },
+                  ),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                  const Text('Выбор цвета темы', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: List.generate(
+                      appState.lightColors.length,
+                      (index) => GestureDetector(
+                        onTap: () {
+                          appState.setColor(index);
+                          setModalState(() {});
+                        },
+                        child: CircleAvatar(
+                          radius: 20,
+                          backgroundColor: isDark ? appState.darkColors[index] : appState.lightColors[index],
+                          child: appState.selectedColorIndex == index
+                              ? const Icon(Icons.check, color: Colors.white, size: 20)
+                              : null,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const Divider(height: 24),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.leaderboard_outlined, color: appState.primaryColor),
+                    title: const Text('Таблица лидеров'),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _showLeaderboardBottomSheet();
+                    },
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.delete_forever_outlined, color: Colors.redAccent),
+                    title: const Text('Сбросить все данные', style: TextStyle(color: Colors.redAccent)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      appState.resetAllData();
+                    },
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = MyApp.of(context)!;
@@ -468,36 +708,44 @@ class _HomeScreenState extends State<HomeScreen> {
     double progress = targetAmount > 0 ? (currentAmount / targetAmount) : 0;
     if (progress > 1.0) progress = 1.0;
 
+    final bgColor = isDark ? const Color(0xFF121212) : const Color(0xFFFBF8FF);
+    final headerColor = appState.primaryColor.withOpacity(isDark ? 0.25 : 0.15);
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          widget.userName,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: appState.isRainbowMode ? Colors.purpleAccent : null,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(60),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [headerColor, bgColor],
+            ),
+          ),
+          child: AppBar(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            title: Text(widget.userName, style: const TextStyle(fontWeight: FontWeight.bold)),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.calculate_outlined),
+                onPressed: () {
+                  Navigator.push(context, createAnimatedRoute(const CalculatorScreen()));
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: _showSettingsBottomSheet,
+              )
+            ],
           ),
         ),
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.calculate_outlined),
-            onPressed: () {
-              Navigator.push(context, createAnimatedRoute(const CalculatorScreen()));
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () {
-              Navigator.push(context, createAnimatedRoute(const SettingsScreen()));
-            },
-          )
-        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // Карточка мечты со шкалой прогресса
+            // Карточка мечты со шкалой прогресса и кнопкой редактирования
             Container(
               padding: const EdgeInsets.all(20),
               width: double.infinity,
@@ -512,7 +760,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 6),
                   Text('Нажмите, чтобы выбрать фото цели', style: TextStyle(color: appState.primaryColor, fontSize: 12)),
                   const SizedBox(height: 16),
-                  Text(goalTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(goalTitle, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                      IconButton(
+                        icon: Icon(Icons.edit_outlined, size: 18, color: appState.primaryColor),
+                        onPressed: _showEditGoalModal,
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 4),
                   Text(
                     '${currentAmount.toStringAsFixed(0)} / ${targetAmount.toStringAsFixed(0)} ₽',
@@ -628,6 +885,10 @@ class _HomeScreenState extends State<HomeScreen> {
               title: 'Поддержать проект',
               subtitle: 'Приложение абсолютно бесплатное и без подписок!',
               buttonText: 'Отправить донат',
+              onTap: () => _showComingSoonBottomSheet(
+                'Поддержать проект',
+                'Функция отправки донатов находится в разработке. Скоро вы сможете поддержать автора приложения прямо отсюда!',
+              ),
             ),
             const SizedBox(height: 12),
 
@@ -639,6 +900,10 @@ class _HomeScreenState extends State<HomeScreen> {
               title: 'Наш телеграм канал',
               subtitle: 'Сообщайте о багах, делитесь идеями и следите за обновлениями!',
               buttonText: 'Сообщить о баге / Идеи',
+              onTap: () => _showComingSoonBottomSheet(
+                'Наш телеграм канал',
+                'Переход в официальный Telegram-канал проекта появится в ближайшем обновлении.',
+              ),
             ),
           ],
         ),
@@ -653,6 +918,7 @@ class _HomeScreenState extends State<HomeScreen> {
     required String title,
     required String subtitle,
     required String buttonText,
+    required VoidCallback onTap,
   }) {
     final isDark = MyApp.of(context)!.isDark;
 
@@ -675,7 +941,7 @@ class _HomeScreenState extends State<HomeScreen> {
             style: OutlinedButton.styleFrom(
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             ),
-            onPressed: () {},
+            onPressed: onTap,
             child: Text(buttonText),
           )
         ],
@@ -684,7 +950,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// 🤫 Секретный калькулятор с пасхалкой
+// Полноценный калькулятор
 class CalculatorScreen extends StatefulWidget {
   const CalculatorScreen({super.key});
 
@@ -693,24 +959,43 @@ class CalculatorScreen extends StatefulWidget {
 }
 
 class _CalculatorScreenState extends State<CalculatorScreen> {
-  String input = '0';
+  String display = '0';
+  double num1 = 0;
+  double num2 = 0;
+  String operand = '';
 
-  void _onKeyPress(String val) {
+  void _btnPressed(String val) {
     setState(() {
       if (val == 'C') {
-        input = '0';
-      } else if (input == '0') {
-        input = val;
+        display = '0';
+        num1 = 0;
+        num2 = 0;
+        operand = '';
+      } else if (val == '+' || val == '-' || val == '×' || val == '÷') {
+        num1 = double.tryParse(display) ?? 0;
+        operand = val;
+        display = '0';
+      } else if (val == '=') {
+        num2 = double.tryParse(display) ?? 0;
+        if (operand == '+') {
+          display = (num1 + num2).toStringAsFixed(2);
+        } else if (operand == '-') {
+          display = (num1 - num2).toStringAsFixed(2);
+        } else if (operand == '×') {
+          display = (num1 * num2).toStringAsFixed(2);
+        } else if (operand == '÷') {
+          display = num2 != 0 ? (num1 / num2).toStringAsFixed(2) : 'Ошибка';
+        }
+        if (display.endsWith('.00')) {
+          display = display.substring(0, display.length - 3);
+        }
+        operand = '';
       } else {
-        input += val;
-      }
-
-      // Секретный код пасхалки (например "777")
-      if (input == '777') {
-        MyApp.of(context)!.enableRainbowMode();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('🎉 Пасхалка открыта! Активирован радужный режим!')),
-        );
+        if (display == '0') {
+          display = val;
+        } else {
+          display += val;
+        }
       }
     });
   }
@@ -718,7 +1003,12 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   @override
   Widget build(BuildContext context) {
     final appState = MyApp.of(context)!;
-    final keys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', 'C', '0', '='];
+    final keys = [
+      '7', '8', '9', '÷',
+      '4', '5', '6', '×',
+      '1', '2', '3', '-',
+      'C', '0', '=', '+'
+    ];
 
     return Scaffold(
       appBar: AppBar(title: const Text('Калькулятор')),
@@ -734,11 +1024,11 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
                 borderRadius: BorderRadius.circular(24),
               ),
               child: Text(
-                input,
+                display,
                 style: TextStyle(
-                  fontSize: 40,
+                  fontSize: 36,
                   fontWeight: FontWeight.bold,
-                  color: appState.isRainbowMode ? Colors.purpleAccent : appState.primaryColor,
+                  color: appState.primaryColor,
                 ),
               ),
             ),
@@ -747,78 +1037,34 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
               shrinkWrap: true,
               itemCount: keys.length,
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
+                crossAxisCount: 4,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
               ),
               itemBuilder: (context, index) {
                 final k = keys[index];
+                final isOp = ['+', '-', '×', '÷', '='].contains(k);
                 return ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    backgroundColor: k == 'C' ? Colors.redAccent.withOpacity(0.2) : null,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                    backgroundColor: k == 'C'
+                        ? Colors.redAccent.withOpacity(0.2)
+                        : (isOp ? appState.primaryColor.withOpacity(0.2) : null),
                   ),
-                  onPressed: () => _onKeyPress(k),
-                  child: Text(k, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  onPressed: () => _btnPressed(k),
+                  child: Text(
+                    k,
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: isOp ? appState.primaryColor : null,
+                    ),
+                  ),
                 );
               },
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
-
-  @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends State<SettingsScreen> {
-  @override
-  Widget build(BuildContext context) {
-    final appState = MyApp.of(context)!;
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Настройки')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          SwitchListTile.adaptive(
-            title: const Text('Тёмная тема', style: TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: const Text('Использовать тёмное оформление'),
-            value: appState.isDark,
-            onChanged: (val) {
-              appState.toggleTheme(val);
-            },
-          ),
-          const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(8.0),
-            child: Text('Выбор цвета темы', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: List.generate(
-              appState.lightColors.length,
-              (index) => GestureDetector(
-                onTap: () => appState.setColor(index),
-                child: CircleAvatar(
-                  radius: 20,
-                  backgroundColor: appState.isDark
-                      ? appState.darkColors[index]
-                      : appState.lightColors[index],
-                  child: appState.selectedColorIndex == index
-                      ? const Icon(Icons.check, color: Colors.white, size: 20)
-                      : null,
-                ),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
