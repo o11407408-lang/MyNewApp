@@ -581,12 +581,12 @@ class _HomeScreenState extends State<HomeScreen> {
         final appState = MyApp.of(context)!;
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          title: const Text('Пополнить цель'),
+          title: const Text('Пополнить копилку'),
           content: TextField(
             controller: controller,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
-              labelText: 'Сумма в ₽',
+              labelText: 'Сумма (в рублях)',
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
             ),
           ),
@@ -604,11 +604,13 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () {
                 final val = double.tryParse(controller.text) ?? 0;
                 if (val > 0) {
+                  Navigator.pop(context);
                   _updateMoney(val);
+                } else {
+                  Navigator.pop(context);
                 }
-                Navigator.pop(context);
               },
-              child: const Text('Пополнить'),
+              child: const Text('Добавить'),
             ),
           ],
         );
@@ -624,12 +626,12 @@ class _HomeScreenState extends State<HomeScreen> {
         final appState = MyApp.of(context)!;
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          title: const Text('Потратить с цели'),
+          title: const Text('Потратить из копилки'),
           content: TextField(
             controller: controller,
             keyboardType: TextInputType.number,
             decoration: InputDecoration(
-              labelText: 'Сумма в ₽',
+              labelText: 'Сумма (в рублях)',
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
             ),
           ),
@@ -647,11 +649,13 @@ class _HomeScreenState extends State<HomeScreen> {
               onPressed: () {
                 final val = double.tryParse(controller.text) ?? 0;
                 if (val > 0) {
+                  Navigator.pop(context);
                   _updateMoney(-val);
+                } else {
+                  Navigator.pop(context);
                 }
-                Navigator.pop(context);
               },
-              child: const Text('Потратить'),
+              child: const Text('Списать'),
             ),
           ],
         );
@@ -670,7 +674,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final appState = MyApp.of(context)!;
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          title: const Text('Редактировать цель'),
+          title: Text('Изменить цель ${currentGoalIndex + 1}'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -686,7 +690,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 controller: targetController,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
-                  labelText: 'Целевая сумма (₽)',
+                  labelText: 'Целевая сумма (в рублях)',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                 ),
               ),
@@ -724,225 +728,340 @@ class _HomeScreenState extends State<HomeScreen> {
     final currentGoal = goals[currentGoalIndex];
 
     return Scaffold(
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
-          child: Column(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    widget.userName,
-                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.settings_outlined),
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        createAnimatedRoute(const SettingsScreen()),
-                      );
-                    },
-                  ),
+      body: Stack(
+        children: [
+          Container(
+            height: 200,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  appState.primaryColor.withOpacity(isDark ? 0.25 : 0.2),
+                  Colors.transparent,
                 ],
               ),
-              const SizedBox(height: 8),
-              
-              SizedBox(
-                height: 255,
-                child: PageView.builder(
-                  controller: _pageController,
-                  itemCount: goals.length,
-                  onPageChanged: (index) {
-                    setState(() {
-                      currentGoalIndex = index;
-                    });
-                  },
-                  itemBuilder: (context, index) {
-                    final goal = goals[index];
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-                          borderRadius: BorderRadius.circular(24),
-                          boxShadow: [
-                            if (!isDark)
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.04),
-                                blurRadius: 10,
-                                offset: const Offset(0, 4),
-                              ),
-                          ],
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            ),
+          ),
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        widget.userName,
+                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                      ),
+                      Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.calculate_outlined),
+                            onPressed: () => _showComingSoonBottomSheet('Калькулятор накоплений', 'Скоро здесь появится удобный калькулятор для расчета срока достижения целей.'),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.bar_chart_rounded),
+                            onPressed: () => _showComingSoonBottomSheet('Статистика и аналитика', 'Скоро здесь появится подробная статистика ваших сбережений и графики роста.'),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.settings_outlined),
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                createAnimatedRoute(const SettingsScreen()),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  
+                  SizedBox(
+                    height: 235,
+                    child: PageView.builder(
+                      controller: _pageController,
+                      itemCount: goals.length,
+                      onPageChanged: (index) {
+                        setState(() {
+                          currentGoalIndex = index;
+                        });
+                      },
+                      itemBuilder: (context, index) {
+                        final goal = goals[index];
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                              borderRadius: BorderRadius.circular(24),
+                              boxShadow: [
+                                if (!isDark)
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.04),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  ),
+                              ],
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text(
                                   goal.goalTitle,
                                   style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                                 ),
-                                IconButton(
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                  icon: const Icon(Icons.edit_outlined, size: 18),
-                                  onPressed: _showEditGoalDialog,
+                                const SizedBox(height: 4),
+                                SizedBox(
+                                  height: 120,
+                                  child: GestureDetector(
+                                    onTap: _pickImage,
+                                    child: goal.imagePath != null
+                                        ? ClipRRect(
+                                            borderRadius: BorderRadius.circular(16),
+                                            child: Image.file(
+                                              File(goal.imagePath!),
+                                              fit: BoxFit.cover,
+                                              width: double.infinity,
+                                            ),
+                                          )
+                                        : Container(
+                                            width: double.infinity,
+                                            decoration: BoxDecoration(
+                                              color: appState.primaryColor.withOpacity(0.1),
+                                              borderRadius: BorderRadius.circular(16),
+                                            ),
+                                            child: Column(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              children: [
+                                                Icon(Icons.add_a_photo_outlined, color: appState.primaryColor, size: 28),
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  'Цель ${index + 1}: Нажмите для фото',
+                                                  style: TextStyle(color: appState.primaryColor, fontSize: 11, fontWeight: FontWeight.bold),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ₽',
+                                  style: TextStyle(fontSize: 16, color: appState.primaryColor, fontWeight: FontWeight.bold),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 4),
-                            SizedBox(
-                              height: 140,
-                              child: GestureDetector(
-                                onTap: _pickImage,
-                                child: goal.imagePath != null
-                                    ? ClipRRect(
-                                        borderRadius: BorderRadius.circular(16),
-                                        child: Image.file(
-                                          File(goal.imagePath!),
-                                          fit: BoxFit.cover,
-                                          width: double.infinity,
-                                        ),
-                                      )
-                                    : Container(
-                                        width: double.infinity,
-                                        decoration: BoxDecoration(
-                                          color: appState.primaryColor.withOpacity(0.1),
-                                          borderRadius: BorderRadius.circular(16),
-                                        ),
-                                        child: Column(
-                                          mainAxisAlignment: MainAxisAlignment.center,
-                                          children: [
-                                            Icon(Icons.add_a_photo_outlined, color: appState.primaryColor, size: 28),
-                                            const SizedBox(height: 4),
-                                            Text(
-                                              'Цель ${index + 1}: Нажмите для фото',
-                                              style: TextStyle(color: appState.primaryColor, fontSize: 11, fontWeight: FontWeight.bold),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ₽',
-                              style: TextStyle(fontSize: 16, color: appState.primaryColor, fontWeight: FontWeight.bold),
-                            ),
-                          ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(
+                      goals.length,
+                      (index) => Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 3),
+                        width: currentGoalIndex == index ? 16 : 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: currentGoalIndex == index ? appState.primaryColor : Colors.grey.withOpacity(0.4),
+                          borderRadius: BorderRadius.circular(4),
                         ),
                       ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(
-                  goals.length,
-                  (index) => Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 3),
-                    width: currentGoalIndex == index ? 16 : 8,
-                    height: 8,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: appState.primaryColor,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          ),
+                          onPressed: _showAddMoneyDialog,
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.add, size: 18),
+                              SizedBox(width: 6),
+                              Text('Пополнить', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            side: BorderSide(color: appState.primaryColor, width: 1.5),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          ),
+                          onPressed: _showSpendMoneyDialog,
+                          child: Text(
+                            'Потратил',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: appState.primaryColor),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      IconButton(
+                        style: IconButton.styleFrom(
+                          backgroundColor: appState.primaryColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.all(12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: _showEditGoalDialog,
+                        icon: const Icon(Icons.edit_outlined, size: 20),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'История операций',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    constraints: const BoxConstraints(minHeight: 80, maxHeight: 200),
+                    padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: currentGoalIndex == index ? appState.primaryColor : Colors.grey.withOpacity(0.4),
-                      borderRadius: BorderRadius.circular(4),
+                      color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: currentGoal.history.isEmpty
+                        ? const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(20.0),
+                              child: Text(
+                                'Операций пока нет',
+                                style: TextStyle(color: Colors.grey, fontSize: 13),
+                              ),
+                            ),
+                          )
+                        : ListView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: currentGoal.history.length,
+                            itemBuilder: (context, index) {
+                              final item = currentGoal.history[index];
+                              final isPlus = item.startsWith('+');
+                              return ListTile(
+                                dense: true,
+                                title: Text(
+                                  item,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: isPlus ? Colors.green : Colors.red,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Column(
+                      children: [
+                        Icon(Icons.favorite_rounded, color: appState.primaryColor, size: 32),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Поддержать проект',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Приложение абсолютно бесплатное и без подписок!',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                        const SizedBox(height: 14),
+                        OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(color: appState.primaryColor, width: 1.5),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                          ),
+                          onPressed: () => _showComingSoonBottomSheet('Поддержать проект', 'Скоро здесь появится ссылка на донаты для поддержки разработки приложения.'),
+                          child: Text(
+                            'Отправить донат',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: appState.primaryColor),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: appState.primaryColor,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                      onPressed: _showAddMoneyDialog,
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.add, size: 18),
-                          SizedBox(width: 6),
-                          Text('Пополнить', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
+                  const SizedBox(height: 16),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Column(
+                      children: [
+                        Icon(Icons.send_rounded, color: appState.primaryColor, size: 32),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Наш телеграм канал',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Сообщайте о багах, делитесь идеями и следите за обновлениями!',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                        const SizedBox(height: 14),
+                        OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(color: appState.primaryColor, width: 1.5),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                          ),
+                          onPressed: () => _showComingSoonBottomSheet('Наш телеграм канал', 'Скоро здесь появится ссылка на официальный Telegram-канал проекта.'),
+                          child: Text(
+                            'Сообщить о баге / Идеи',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: appState.primaryColor),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        side: BorderSide(color: appState.primaryColor, width: 1.5),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                      onPressed: _showSpendMoneyDialog,
-                      child: Text(
-                        'Потратил',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: appState.primaryColor),
-                      ),
-                    ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'Я Коплю: мечты v.2.3 (beta)',
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
                   ),
+                  const SizedBox(height: 20),
                 ],
               ),
-              const SizedBox(height: 12),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'История операций',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-              ),
-              const SizedBox(height: 6),
-              Expanded(
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  child: currentGoal.history.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'Операций пока нет',
-                            style: TextStyle(color: Colors.grey, fontSize: 13),
-                          ),
-                        )
-                      : ListView.builder(
-                          itemCount: currentGoal.history.length,
-                          itemBuilder: (context, index) {
-                            final item = currentGoal.history[index];
-                            final isPlus = item.startsWith('+');
-                            return ListTile(
-                              dense: true,
-                              title: Text(
-                                item,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: isPlus ? Colors.green : Colors.red,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -1062,25 +1181,4 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const Divider(),
           const SizedBox(height: 20),
-          Center(
-            child: GestureDetector(
-              onTap: () {
-                setState(() {
-                  _versionClickCount++;
-                  if (_versionClickCount == 5) {
-                    _versionClickCount = 0;
-                    _showBaliEasterEgg(context);
-                  }
-                });
-              },
-              child: const Text(
-                'Версия 1.0.0',
-                style: TextStyle(color: Colors.grey, fontSize: 14),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+...
