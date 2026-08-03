@@ -708,25 +708,21 @@ class _HomeScreenState extends State<HomeScreen> {
                     widget.userName,
                     style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                   ),
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.settings_outlined),
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            createAnimatedRoute(const SettingsScreen()),
-                          );
-                        },
-                      ),
-                    ],
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        createAnimatedRoute(const SettingsScreen()),
+                      );
+                    },
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
               
-              // карточка цели с размерами под картинку через PageView
               SizedBox(
+                height: 255,
                 child: PageView.builder(
                   controller: _pageController,
                   itemCount: goals.length,
@@ -741,7 +737,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 4.0),
                       child: Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                           borderRadius: BorderRadius.circular(24),
@@ -762,53 +758,54 @@ class _HomeScreenState extends State<HomeScreen> {
                               children: [
                                 Text(
                                   goal.goalTitle,
-                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                                 ),
                                 IconButton(
-                                  icon: const Icon(Icons.edit_outlined, size: 20),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  icon: const Icon(Icons.edit_outlined, size: 18),
                                   onPressed: _showEditGoalDialog,
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 8),
-                            GestureDetector(
-                              onTap: _pickImage,
-                              child: goal.imagePath != null
-                                  ? ClipRRect(
-                                      borderRadius: BorderRadius.circular(16),
-                                      child: AspectRatio(
-                                        aspectRatio: 4 / 3,
+                            const SizedBox(height: 4),
+                            SizedBox(
+                              height: 140,
+                              child: GestureDetector(
+                                onTap: _pickImage,
+                                child: goal.imagePath != null
+                                    ? ClipRRect(
+                                        borderRadius: BorderRadius.circular(16),
                                         child: Image.file(
                                           File(goal.imagePath!),
                                           fit: BoxFit.cover,
                                           width: double.infinity,
                                         ),
+                                      )
+                                    : Container(
+                                        width: double.infinity,
+                                        decoration: BoxDecoration(
+                                          color: appState.primaryColor.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(16),
+                                        ),
+                                        child: Column(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Icon(Icons.add_a_photo_outlined, color: appState.primaryColor, size: 28),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              'Цель ${index + 1}: Нажмите для фото',
+                                              style: TextStyle(color: appState.primaryColor, fontSize: 11, fontWeight: FontWeight.bold),
+                                            ),
+                                          ],
+                                        ),
                                       ),
-                                    )
-                                  : Container(
-                                      height: 160,
-                                      width: double.infinity,
-                                      decoration: BoxDecoration(
-                                        color: appState.primaryColor.withOpacity(0.1),
-                                        borderRadius: BorderRadius.circular(16),
-                                      ),
-                                      child: Column(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        children: [
-                                          Icon(Icons.add_a_photo_outlined, color: appState.primaryColor, size: 36),
-                                          const SizedBox(height: 8),
-                                          Text(
-                                            'Цель ${index + 1}: Нажмите для фото',
-                                            style: TextStyle(color: appState.primaryColor, fontSize: 12, fontWeight: FontWeight.bold),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
+                              ),
                             ),
-                            const SizedBox(height: 12),
+                            const SizedBox(height: 8),
                             Text(
                               '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ₽',
-                              style: TextStyle(fontSize: 18, color: appState.primaryColor, fontWeight: FontWeight.bold),
+                              style: TextStyle(fontSize: 16, color: appState.primaryColor, fontWeight: FontWeight.bold),
                             ),
                           ],
                         ),
@@ -817,7 +814,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   },
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(
@@ -833,7 +830,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
               Row(
                 children: [
                   Expanded(
@@ -841,50 +838,50 @@ class _HomeScreenState extends State<HomeScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: appState.primaryColor,
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                       onPressed: _showAddMoneyDialog,
                       child: const Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.add, size: 20),
-                          SizedBox(width: 8),
-                          Text('Пополнить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                          Icon(Icons.add, size: 18),
+                          SizedBox(width: 6),
+                          Text('Пополнить', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                         ],
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: OutlinedButton(
                       style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         side: BorderSide(color: appState.primaryColor, width: 1.5),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                       onPressed: _showSpendMoneyDialog,
                       child: Text(
                         'Потратил',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: appState.primaryColor),
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: appState.primaryColor),
                       ),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 12),
               const Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
                   'История операций',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Expanded(
                 child: Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
                     color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                     borderRadius: BorderRadius.circular(24),
@@ -893,7 +890,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ? const Center(
                           child: Text(
                             'Операций пока нет',
-                            style: TextStyle(color: Colors.grey, fontSize: 14),
+                            style: TextStyle(color: Colors.grey, fontSize: 13),
                           ),
                         )
                       : ListView.builder(
