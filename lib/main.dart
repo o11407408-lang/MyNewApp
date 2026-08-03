@@ -74,8 +74,8 @@ class RegistrationScreen extends StatefulWidget {
 
   const RegistrationScreen({
     super.key,
-    required final this.rainbowColors,
-    required final this.onComplete,
+    required this.rainbowColors,
+    required this.onComplete,
   });
 
   @override
