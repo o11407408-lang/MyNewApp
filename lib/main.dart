@@ -730,16 +730,21 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          Container(
-            height: 200,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  appState.primaryColor.withOpacity(isDark ? 0.25 : 0.2),
-                  Colors.transparent,
-                ],
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 150,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    appState.primaryColor.withOpacity(isDark ? 0.25 : 0.2),
+                    Colors.transparent,
+                  ],
+                ),
               ),
             ),
           ),
@@ -757,10 +762,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       Row(
                         children: [
-                          IconButton(
-                            icon: const Icon(Icons.calculate_outlined),
-                            onPressed: () => _showComingSoonBottomSheet('Калькулятор накоплений', 'Скоро здесь появится удобный калькулятор для расчета срока достижения целей.'),
-                          ),
                           IconButton(
                             icon: const Icon(Icons.bar_chart_rounded),
                             onPressed: () => _showComingSoonBottomSheet('Статистика и аналитика', 'Скоро здесь появится подробная статистика ваших сбережений и графики роста.'),
@@ -781,7 +782,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 8),
                   
                   SizedBox(
-                    height: 235,
+                    height: 205,
                     child: PageView.builder(
                       controller: _pageController,
                       itemCount: goals.length,
@@ -796,7 +797,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 4.0),
                           child: Container(
                             width: double.infinity,
-                            padding: const EdgeInsets.all(12),
+                            padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
                               color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                               borderRadius: BorderRadius.circular(24),
@@ -814,11 +815,11 @@ class _HomeScreenState extends State<HomeScreen> {
                               children: [
                                 Text(
                                   goal.goalTitle,
-                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                                 ),
                                 const SizedBox(height: 4),
                                 SizedBox(
-                                  height: 120,
+                                  height: 95,
                                   child: GestureDetector(
                                     onTap: _pickImage,
                                     child: goal.imagePath != null
@@ -839,21 +840,21 @@ class _HomeScreenState extends State<HomeScreen> {
                                             child: Column(
                                               mainAxisAlignment: MainAxisAlignment.center,
                                               children: [
-                                                Icon(Icons.add_a_photo_outlined, color: appState.primaryColor, size: 28),
-                                                const SizedBox(height: 4),
+                                                Icon(Icons.add_a_photo_outlined, color: appState.primaryColor, size: 24),
+                                                const SizedBox(height: 2),
                                                 Text(
                                                   'Цель ${index + 1}: Нажмите для фото',
-                                                  style: TextStyle(color: appState.primaryColor, fontSize: 11, fontWeight: FontWeight.bold),
+                                                  style: TextStyle(color: appState.primaryColor, fontSize: 10, fontWeight: FontWeight.bold),
                                                 ),
                                               ],
                                             ),
                                           ),
                                   ),
                                 ),
-                                const SizedBox(height: 8),
+                                const SizedBox(height: 6),
                                 Text(
                                   '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ₽',
-                                  style: TextStyle(fontSize: 16, color: appState.primaryColor, fontWeight: FontWeight.bold),
+                                  style: TextStyle(fontSize: 15, color: appState.primaryColor, fontWeight: FontWeight.bold),
                                 ),
                               ],
                             ),
@@ -862,7 +863,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: List.generate(
@@ -916,15 +917,18 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       const SizedBox(width: 10),
-                      IconButton(
-                        style: IconButton.styleFrom(
-                          backgroundColor: appState.primaryColor,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.all(12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      SizedBox(
+                        height: 48,
+                        width: 48,
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            side: BorderSide(color: appState.primaryColor, width: 1.5),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          ),
+                          onPressed: _showEditGoalDialog,
+                          child: Icon(Icons.edit_outlined, size: 20, color: appState.primaryColor),
                         ),
-                        onPressed: _showEditGoalDialog,
-                        icon: const Icon(Icons.edit_outlined, size: 20),
                       ),
                     ],
                   ),
@@ -939,8 +943,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 8),
                   Container(
                     width: double.infinity,
-                    constraints: const BoxConstraints(minHeight: 80, maxHeight: 200),
-                    padding: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
                     decoration: BoxDecoration(
                       color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                       borderRadius: BorderRadius.circular(24),
@@ -962,13 +965,30 @@ class _HomeScreenState extends State<HomeScreen> {
                             itemBuilder: (context, index) {
                               final item = currentGoal.history[index];
                               final isPlus = item.startsWith('+');
-                              return ListTile(
-                                dense: true,
-                                title: Text(
-                                  item,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: isPlus ? Colors.green : Colors.red,
+                              return Container(
+                                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: isDark ? const Color(0xFF2C2C2C) : const Color(0xFFF9F6FC),
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: ListTile(
+                                  dense: true,
+                                  leading: CircleAvatar(
+                                    radius: 16,
+                                    backgroundColor: (isPlus ? Colors.green : Colors.red).withOpacity(0.15),
+                                    child: Icon(
+                                      isPlus ? Icons.arrow_downward_rounded : Icons.arrow_upward_rounded,
+                                      size: 16,
+                                      color: isPlus ? Colors.green : Colors.red,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    item,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                      color: isPlus ? Colors.green : Colors.red,
+                                    ),
                                   ),
                                 ),
                               );
