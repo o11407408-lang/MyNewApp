@@ -26,6 +26,11 @@ jobs:
       - name: Recreate android project files
         run: flutter create . --platforms=android
 
+      - name: Force compileSdk to 36
+        run: |
+          sed -i 's/compileSdk = .*/compileSdk = 36/' android/app/build.gradle || true
+          sed -i 's/compileSdkVersion .*/compileSdkVersion 36/' android/app/build.gradle || true
+
       - name: Install dependencies
         run: flutter pub get
 
