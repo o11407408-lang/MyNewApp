@@ -118,7 +118,7 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Я коплю',
+      title: 'Я Коплю: мечты',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: isDark ? Brightness.dark : Brightness.light,
@@ -180,7 +180,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ),
               const SizedBox(height: 16),
               const Text(
-                'Добро пожаловать в\n«Я коплю»',
+                'Добро пожаловать в\n«Я Коплю: мечты»',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
               ),
@@ -755,6 +755,15 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         actions: [
+          // Исправленная иконка калькулятора (теперь открывает калькулятор/модальное окно расчетов)
+          IconButton(
+            icon: const Icon(Icons.calculate_outlined),
+            onPressed: () => _showComingSoonBottomSheet(
+              'Калькулятор',
+              'Расчет необходимых ежедневных сбережений для достижения цели появится совсем скоро!',
+            ),
+          ),
+          // Иконка таблицы лидеров (отдельная кнопка)
           IconButton(
             icon: const Icon(Icons.leaderboard_outlined),
             onPressed: () => _showComingSoonBottomSheet(
@@ -1017,6 +1026,21 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
+
+            const SizedBox(height: 24),
+
+            // Строка с версией приложения в самом низу (как в Телеграме)
+            const Center(
+              child: Text(
+                'Я Коплю: мечты v.2.3 (beta)',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
           ],
         ),
       ),
