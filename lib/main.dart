@@ -545,6 +545,34 @@ class _HomeScreenState extends State<HomeScreen> {
     _saveGoalData(currentGoalIndex);
   }
 
+  void _showComingSoonBottomSheet(String title, String description) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.hourglass_top_rounded, size: 48, color: appState.primaryColor),
+              const SizedBox(height: 12),
+              const Text('Скоро появится', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
+              const SizedBox(height: 8),
+              Text(description, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: Colors.grey)),
+              const SizedBox(height: 24),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _showAddMoneyDialog() {
     final controller = TextEditingController();
     showDialog(
