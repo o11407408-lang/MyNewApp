@@ -1181,4 +1181,86 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const Divider(),
           const SizedBox(height: 20),
-...
+          ListTile(
+            title: const Text('Выбрать цвет темы'),
+            subtitle: const Text('Нажмите на цвет для смены акцента'),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: List.generate(
+              appState.lightColors.length,
+              (index) => GestureDetector(
+                onTap: () {
+                  appState.setColor(index);
+                },
+                child: CircleAvatar(
+                  radius: 20,
+                  backgroundColor: appState.isDark ? appState.darkColors[index] : appState.lightColors[index],
+                  child: appState.selectedColorIndex == index
+                      ? const Icon(Icons.check, color: Colors.white, size: 20)
+                      : null,
+                ),
+              ),
+            ),
+          ),
+          const Divider(height: 40),
+          ListTile(
+            title: const Text('Сбросить все данные'),
+            subtitle: const Text('Удалить цели, историю и начать заново'),
+            trailing: const Icon(Icons.delete_forever, color: Colors.red),
+            onTap: () {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                  title: const Text('Сброс данных'),
+                  content: const Text('Вы уверены, что хотите удалить все данные и начать с экрана приветствия?'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Отмена'),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      onPressed: () {
+                        appState.resetAllData();
+                        Navigator.of(context).popUntil((route) => route.isFirst);
+                      },
+                      child: const Text('Сбросить'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          const Divider(height: 40),
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                _versionClickCount++;
+                if (_versionClickCount >= 5) {
+                  _versionClickCount = 0;
+                  _showBaliEasterEgg(context);
+                }
+              });
+            },
+            child: const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12.0),
+              child: Center(
+                child: Text(
+                  'Я Коплю: мечты v.2.3 (beta)',
+                  style: TextStyle(color: Colors.grey, fontSize: 13),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
