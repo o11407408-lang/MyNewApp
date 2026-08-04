@@ -2,11 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
 import 'dart:ui';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Firebase нужен для режима разработчика (пожертвования видны на всех
+  // устройствах). Если проект ещё не настроен через `flutterfire configure`,
+  // оборачиваем в try/catch, чтобы остальное приложение работало без сбоев.
+  try {
+    await Firebase.initializeApp();
+  } catch (e) {
+    // ignore: avoid_print
+    print('Firebase init failed (ещё не настроен?): $e');
+  }
   final prefs = await SharedPreferences.getInstance();
   final isRegistered = prefs.getBool('is_registered') ?? false;
   final savedName = prefs.getString('user_name') ?? '';
@@ -362,6 +373,12 @@ class WelcomeGreetingScreen extends StatelessWidget {
           child: Column(
             children: [
               const Spacer(),
+              CircleAvatar(
+                radius: 35,
+                backgroundColor: appState.primaryColor.withOpacity(0.15),
+                child: Icon(Icons.waving_hand_rounded, size: 36, color: appState.primaryColor),
+              ),
+              const SizedBox(height: 20),
               Center(
                 child: Text(
                   'Здравствуйте, $fullName!',
@@ -430,6 +447,9 @@ class _HomeScreenState extends State<HomeScreen> {
   int currentGoalIndex = 0;
   final PageController _pageController = PageController();
 
+  int _nameTapCount = 0;
+  bool _devModeEnabled = false;
+
   List<GoalData> goals = [
     GoalData(currentAmount: 0, targetAmount: 0, goalTitle: 'Первая мечта', history: []),
     GoalData(currentAmount: 0, targetAmount: 0, goalTitle: 'Вторая мечта', history: []),
@@ -463,7 +483,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadAllGoals() async {
     final prefs = await SharedPreferences.getInstance();
     final count = prefs.getInt('goals_count') ?? goals.length;
+    final devMode = prefs.getBool('dev_mode_enabled') ?? false;
     setState(() {
+      _devModeEnabled = devMode;
       while (goals.length < count) {
         goals.add(GoalData(
           currentAmount: 0,
@@ -678,6 +700,51 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _showLeaderboardModal() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.volunteer_activism_rounded, size: 48, color: appState.primaryColor),
+              const SizedBox(height: 12),
+              const Text('Таблица лидеров', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text('Пожертвования', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
+              const SizedBox(height: 8),
+              const Text(
+                'Сравнение накоплений и достижения других пользователей!',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _showSupportModal() {
     showModalBottomSheet(
       context: context,
@@ -714,6 +781,190 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   onPressed: () => Navigator.pop(context),
                   child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // Пасхалка: 10 тапов по имени в шапке открывают ввод кода разработчика
+  void _handleNameTap() {
+    _nameTapCount++;
+    if (_nameTapCount >= 10) {
+      _nameTapCount = 0;
+      _showDevCodeModal();
+    }
+  }
+
+  void _showDevCodeModal() {
+    final codeController = TextEditingController();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            top: 28,
+            left: 24,
+            right: 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircleAvatar(
+                radius: 28,
+                backgroundColor: appState.primaryColor.withOpacity(0.15),
+                child: Icon(Icons.lock_outline_rounded, size: 28, color: appState.primaryColor),
+              ),
+              const SizedBox(height: 16),
+              const Text('Режим разработчика', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              const Text(
+                'Введите код доступа',
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              TextField(
+                controller: codeController,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                autofocus: true,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 26, letterSpacing: 10, fontWeight: FontWeight.bold),
+                decoration: InputDecoration(
+                  counterText: '',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () {
+                    if (codeController.text.trim() == '838995') {
+                      Navigator.pop(context);
+                      _enableDevMode();
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Неверный код')),
+                      );
+                    }
+                  },
+                  child: const Text('Подтвердить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _enableDevMode() async {
+    setState(() {
+      _devModeEnabled = true;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('dev_mode_enabled', true);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Режим разработчика активирован!')),
+      );
+    }
+  }
+
+  // Добавление пожертвования в общую базу (Firestore) — видно на всех
+  // устройствах, а не только локально.
+  void _showAddDonationModal() {
+    final donorNameController = TextEditingController();
+    final donorAmountController = TextEditingController();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            top: 24,
+            left: 24,
+            right: 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Добавить пожертвование', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              TextField(
+                controller: donorNameController,
+                decoration: InputDecoration(
+                  labelText: 'Кто отправил',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: donorAmountController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Сумма (в рублях)',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () async {
+                    final name = donorNameController.text.trim();
+                    final amount = double.tryParse(donorAmountController.text.trim()) ?? 0;
+                    if (name.isEmpty || amount <= 0) return;
+                    try {
+                      await FirebaseFirestore.instance.collection('donations').add({
+                        'name': name,
+                        'amount': amount,
+                        'timestamp': FieldValue.serverTimestamp(),
+                      });
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Пожертвование добавлено для всех пользователей')),
+                        );
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Ошибка: Firebase не настроен ($e)')),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -792,6 +1043,39 @@ class _HomeScreenState extends State<HomeScreen> {
                     label: const Text('Поделиться приложением', style: TextStyle(fontWeight: FontWeight.bold)),
                   ),
                 ),
+                if (_devModeEnabled) ...[
+                  const SizedBox(height: 20),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(Icons.verified_user_rounded, size: 16, color: appState.primaryColor),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Режим разработчика',
+                        style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: appState.primaryColor,
+                        side: BorderSide(color: appState.primaryColor),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _showAddDonationModal();
+                      },
+                      icon: const Icon(Icons.volunteer_activism_outlined),
+                      label: const Text('Добавить пожертвование', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
@@ -1035,7 +1319,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const Spacer(),
-                  const Text('🏝️', style: TextStyle(fontSize: 72)),
+                  CircleAvatar(
+                    radius: 35,
+                    backgroundColor: appState.primaryColor.withOpacity(0.15),
+                    child: Icon(Icons.beach_access_rounded, size: 36, color: appState.primaryColor),
+                  ),
                   const SizedBox(height: 24),
                   const Text(
                     'Марат, главный разработчик этого приложения, заслуживает отдых на Бали',
@@ -1056,6 +1344,24 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: const Text('Согласен', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(color: appState.primaryColor, width: 2),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      // Специально ничего не делает при нажатии — кнопка
+                      // "для вида", а не для реального выбора.
+                      onPressed: () {},
+                      child: Text(
+                        'Нет',
+                        style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 16),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -1074,7 +1380,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(fullName, style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: GestureDetector(
+          onTap: _handleNameTap,
+          behavior: HitTestBehavior.opaque,
+          child: Text(fullName, style: const TextStyle(fontWeight: FontWeight.bold)),
+        ),
         flexibleSpace: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -1090,10 +1400,7 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.leaderboard_outlined),
-            onPressed: () => _showComingSoonBottomSheet(
-              'Таблица лидеров',
-              'Сравнение накоплений и достижения других пользователей скоро появятся!',
-            ),
+            onPressed: _showLeaderboardModal,
           ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
@@ -1352,49 +1659,56 @@ class _HomeScreenState extends State<HomeScreen> {
 
               const Text('История операций', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: goals[currentGoalIndex].history.isEmpty
-                    ? const Center(
-                        child: Padding(
-                          padding: EdgeInsets.symmetric(vertical: 12.0),
-                          child: Text(
-                            'Операций пока нет',
-                            style: TextStyle(color: Colors.grey, fontSize: 14),
+              // AnimatedSize — плавно меняет высоту блока при переключении
+              // между целями с разной длиной истории (вместо резкого скачка).
+              AnimatedSize(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeInOut,
+                alignment: Alignment.topCenter,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: goals[currentGoalIndex].history.isEmpty
+                      ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12.0),
+                            child: Text(
+                              'Операций пока нет',
+                              style: TextStyle(color: Colors.grey, fontSize: 14),
+                            ),
                           ),
-                        ),
-                      )
-                    : ListView.separated(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: goals[currentGoalIndex].history.length,
-                        separatorBuilder: (context, index) => const Divider(height: 16),
-                        itemBuilder: (context, index) {
-                          final item = goals[currentGoalIndex].history[index];
-                          final isAdd = item.startsWith('+');
-                          return Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                isAdd ? 'Пополнение' : 'Списание',
-                                style: const TextStyle(fontWeight: FontWeight.w500),
-                              ),
-                              Text(
-                                item,
-                                style: TextStyle(
-                                  color: isAdd ? Colors.green : Colors.red,
-                                  fontWeight: FontWeight.bold,
+                        )
+                      : ListView.separated(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: goals[currentGoalIndex].history.length,
+                          separatorBuilder: (context, index) => const Divider(height: 16),
+                          itemBuilder: (context, index) {
+                            final item = goals[currentGoalIndex].history[index];
+                            final isAdd = item.startsWith('+');
+                            return Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  isAdd ? 'Пополнение' : 'Списание',
+                                  style: const TextStyle(fontWeight: FontWeight.w500),
                                 ),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
+                                Text(
+                                  item,
+                                  style: TextStyle(
+                                    color: isAdd ? Colors.green : Colors.red,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                ),
               ),
 
               const SizedBox(height: 24),
