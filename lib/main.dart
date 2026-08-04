@@ -6,9 +6,13 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
 import 'dart:ui';
+import 'dart:convert';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Firebase нужен для режима разработчика (пожертвования видны на всех
+  // устройствах). Если проект ещё не настроен через `flutterfire configure`,
+  // оборачиваем в try/catch, чтобы остальное приложение работало без сбоев.
   try {
     await Firebase.initializeApp(
       options: const FirebaseOptions(
@@ -20,7 +24,8 @@ void main() async {
       ),
     );
   } catch (e) {
-    print('Firebase init failed: $e');
+    // ignore: avoid_print
+    print('Firebase init failed (ещё не настроен?): $e');
   }
   final prefs = await SharedPreferences.getInstance();
   final isRegistered = prefs.getBool('is_registered') ?? false;
@@ -68,6 +73,8 @@ class _MyAppState extends State<MyApp> {
   late String userLastName;
   late bool isRegistered;
 
+  // Убран один из двух одинаковых по смыслу голубых/синих оттенков —
+  // осталось 5 цветов вместо 6.
   final List<Color> lightColors = [
     Colors.red,
     Colors.orange,
@@ -237,7 +244,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   children: [
                     _buildFeatureItem(Icons.person_outline, 'Персонализация', 'Указывай имя и фамилию.', appState.primaryColor),
                     const Divider(height: 16),
-                    _buildFeatureItem(Icons.image_outlined, 'Визуализация мечты', 'Добавляй фото целей.', appState.primaryColor),
+                    _buildFeatureItem(Icons.image_outlined, 'Визуализация мечты', 'Добавляй фото двух целей.', appState.primaryColor),
                     const Divider(height: 16),
                     _buildFeatureItem(Icons.palette_outlined, 'Дизайн и темы', 'Выбирай любимый цвет темы.', appState.primaryColor),
                   ],
@@ -273,7 +280,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     ),
                     const SizedBox(height: 16),
                     const Text(
-                      'Выберите цвет темы',
+                      'Выберете цвет темы',
                       style: TextStyle(
                         fontSize: 13,
                         color: Colors.grey,
@@ -369,13 +376,6 @@ class WelcomeGreetingScreen extends StatelessWidget {
     final fullName = userLastName.isNotEmpty ? '$userName $userLastName' : userName;
 
     return Scaffold(
-      appBar: AppBar(
-        // 2) Кнопка назад в левом верхнем углу
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
@@ -390,9 +390,9 @@ class WelcomeGreetingScreen extends StatelessWidget {
               const SizedBox(height: 20),
               Center(
                 child: Text(
-                  'Здравствуйте, $fullName!\nПоздравляем с окончанием цели!',
+                  'Здравствуйте, $fullName!',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
                 ),
               ),
               const Spacer(),
@@ -452,62 +452,30 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen> {
   int currentGoalIndex = 0;
   final PageController _pageController = PageController();
 
   int _nameTapCount = 0;
   bool _devModeEnabled = false;
 
+  // История достигнутых/удалённых целей ("История желаний" в настройках)
+  List<Map<String, dynamic>> _wishHistory = [];
+
   List<GoalData> goals = [
     GoalData(currentAmount: 0, targetAmount: 0, goalTitle: 'Первая мечта', history: []),
     GoalData(currentAmount: 0, targetAmount: 0, goalTitle: 'Вторая мечта', history: []),
   ];
-
-  // 6) История желаний (перемещаются сюда после сброса/достижения)
-  List<Map<String, String>> completedWishesHistory = [];
-  // 9) Список писем разработчику
-  List<Map<String, String>> developerMessages = [];
-
-  // 4) Контроллер для плавной двунаправленной анимации истории операций
-  bool _isHistoryExpanded = false;
-  late AnimationController _historyAnimController;
-  late Animation<double> _historyAnimation;
 
   final ImagePicker _picker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
-    _historyAnimController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-    );
-    _historyAnimation = CurvedAnimation(
-      parent: _historyAnimController,
-      curve: Curves.easeInOut,
-    );
     _loadAllGoals();
   }
 
-  @override
-  void dispose() {
-    _historyAnimController.dispose();
-    _pageController.dispose();
-    super.dispose();
-  }
-
-  void _toggleHistoryAnimation() {
-    setState(() {
-      _isHistoryExpanded = !_isHistoryExpanded;
-      if (_isHistoryExpanded) {
-        _historyAnimController.forward();
-      } else {
-        _historyAnimController.reverse();
-      }
-    });
-  }
-
+  // Автоназвания для новых целей, которые пользователь добавляет через "+"
   String _ordinalGoalName(int number) {
     const names = {
       1: 'Первая мечта',
@@ -528,25 +496,19 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final prefs = await SharedPreferences.getInstance();
     final count = prefs.getInt('goals_count') ?? goals.length;
     final devMode = prefs.getBool('dev_mode_enabled') ?? false;
-    
-    // Загрузка истории желаний
-    final savedWishesTitles = prefs.getStringList('completed_wishes_titles') ?? [];
-    final savedWishesDates = prefs.getStringList('completed_wishes_dates') ?? [];
-    completedWishesHistory = List.generate(savedWishesTitles.length, (i) => {
-      'title': savedWishesTitles[i],
-      'date': savedWishesDates[i],
-    });
-
-    // Загрузка писем разработчику
-    final savedMsgTexts = prefs.getStringList('dev_msg_texts') ?? [];
-    final savedMsgTimes = prefs.getStringList('dev_msg_times') ?? [];
-    developerMessages = List.generate(savedMsgTexts.length, (i) => {
-      'message': savedMsgTexts[i],
-      'time': savedMsgTimes[i],
-    });
-
+    final wishRaw = prefs.getStringList('wish_history') ?? [];
     setState(() {
       _devModeEnabled = devMode;
+      _wishHistory = wishRaw
+          .map((e) {
+            try {
+              return Map<String, dynamic>.from(jsonDecode(e) as Map);
+            } catch (_) {
+              return <String, dynamic>{};
+            }
+          })
+          .where((m) => m.isNotEmpty)
+          .toList();
       while (goals.length < count) {
         goals.add(GoalData(
           currentAmount: 0,
@@ -575,8 +537,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     await prefs.setStringList('history_list_$index', goals[index].history);
     if (goals[index].imagePath != null) {
       await prefs.setString('goal_image_path_$index', goals[index].imagePath!);
-    } else {
-      await prefs.remove('goal_image_path_$index');
     }
     if (goals[index].dailyAllowance != null) {
       await prefs.setDouble('daily_allowance_$index', goals[index].dailyAllowance!);
@@ -586,504 +546,1868 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     await prefs.setString('goal_currency_$index', goals[index].currency);
   }
 
-  Future<void> _saveCompletedWishes() async {
+  // (7) Сохраняем список "История желаний"
+  Future<void> _saveWishHistory() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('completed_wishes_titles', completedWishesHistory.map((e) => e['title']!).toList());
-    await prefs.setStringList('completed_wishes_dates', completedWishesHistory.map((e) => e['date']!).toList());
+    final raw = _wishHistory.map((e) => jsonEncode(e)).toList();
+    await prefs.setStringList('wish_history', raw);
   }
 
-  Future<void> _saveDevMessages() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('dev_msg_texts', developerMessages.map((e) => e['message']!).toList());
-    await prefs.setStringList('dev_msg_times', developerMessages.map((e) => e['time']!).toList());
-  }
-
-  // 5) Кнопка удаления/сброса цели в кнопке «Изменить»
-  void _resetCurrentGoal() {
+  Future<void> _addNewGoal() async {
+    final newIndex = goals.length;
+    final newGoal = GoalData(
+      currentAmount: 0,
+      targetAmount: 0,
+      goalTitle: _ordinalGoalName(newIndex + 1),
+      history: [],
+    );
     setState(() {
-      final oldTitle = goals[currentGoalIndex].goalTitle;
-      completedWishesHistory.add({
-        'title': oldTitle,
-        'date': DateTime.now().toString().substring(0, 10),
-      });
-      _saveCompletedWishes();
+      goals.add(newGoal);
+      currentGoalIndex = newIndex;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('goals_count', goals.length);
+    await _saveGoalData(newIndex);
+    if (_pageController.hasClients) {
+      _pageController.animateToPage(
+        newIndex,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
 
-      goals[currentGoalIndex].goalTitle = _ordinalGoalName(currentGoalIndex + 1);
-      goals[currentGoalIndex].targetAmount = 0.0;
-      goals[currentGoalIndex].currentAmount = 0.0;
-      goals[currentGoalIndex].imagePath = null;
-      goals[currentGoalIndex].history.clear();
-      goals[currentGoalIndex].dailyAllowance = null;
+  Future<void> _pickImage() async {
+    final XFile? picked = await _picker.pickImage(source: ImageSource.gallery);
+    if (picked != null) {
+      setState(() {
+        goals[currentGoalIndex].imagePath = picked.path;
+      });
+      _saveGoalData(currentGoalIndex);
+    }
+  }
+
+  Future<void> _updateMoney(double delta) async {
+    setState(() {
+      goals[currentGoalIndex].currentAmount += delta;
+      if (goals[currentGoalIndex].currentAmount < 0) {
+        goals[currentGoalIndex].currentAmount = 0;
+      }
+      final type = delta > 0 ? '+' : '-';
+      final entry = '$type ${delta.abs().toStringAsFixed(0)} ${goals[currentGoalIndex].currency}';
+      goals[currentGoalIndex].history.insert(0, entry);
     });
     _saveGoalData(currentGoalIndex);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Цель сброшена до стандартных параметров и перенесена в историю желаний')),
-    );
+    _checkGoalReached();
   }
 
-  // 7) Сортировка таблицы лидеров: по сумме (убывание), при равенстве — по имени (алфавит)
-  List<Map<String, dynamic>> _getSortedLeaderboard() {
-    List<Map<String, dynamic>> allOps = [];
-    for (int i = 0; i < goals.length; i++) {
-      for (var entry in goals[i].history) {
-        if (entry.startsWith('+')) {
-          final parts = entry.split(' ');
-          if (parts.length >= 2) {
-            final amount = double.tryParse(parts[1]) ?? 0.0;
-            // Имя доната (берем оставшуюся часть строки или дефолт)
-            final name = parts.length > 2 ? parts.skip(2).join(' ') : 'Аноним';
-            allOps.add({'name': name, 'amount': amount});
-          }
-        }
-      }
-    }
-    allOps.sort((a, b) {
-      int cmp = (b['amount'] as double).compareTo(a['amount'] as double);
-      if (cmp != 0) return cmp;
-      return (a['name'] as String).compareTo(b['name'] as String);
+  // (4) Удаление одной записи операции из истории — AnimatedSize, которым
+  // уже обёрнут блок истории, сам плавно анимирует уменьшение высоты.
+  Future<void> _deleteHistoryEntry(int index) async {
+    setState(() {
+      goals[currentGoalIndex].history.removeAt(index);
     });
-    return allOps;
+    await _saveGoalData(currentGoalIndex);
   }
 
-  // 10) Ввод пароля разработчика с крестиком и защитой от случайного закрытия
-  void _showDevPasswordDialog() {
-    final TextEditingController passController = TextEditingController();
-    showDialog(
+  void _quickAdd(double amount) {
+    final goal = goals[currentGoalIndex];
+    if (goal.targetAmount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Сначала укажите цену мечты!')),
+      );
+      return;
+    }
+    _updateMoney(amount);
+  }
+
+  void _shareApp() {
+    // TODO: замени ссылку на реальную ссылку на google диск с apk
+    const shareText =
+        'Привет! Я пользуюсь этим приложением. Присоединяйся!\n'
+        'Я Коплю: мечты\n'
+        'https://drive.google.com/YOUR_APK_LINK_HERE';
+    Share.share(shareText);
+  }
+
+  void _checkGoalReached() {
+    final goal = goals[currentGoalIndex];
+    if (goal.targetAmount > 0 && goal.currentAmount >= goal.targetAmount) {
+      final appState = MyApp.of(context)!;
+      Navigator.push(
+        context,
+        createAnimatedRoute(
+          Scaffold(
+            backgroundColor: appState.isDark ? const Color(0xFF121212) : Colors.white,
+            body: SafeArea(
+              child: Stack(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Spacer(),
+                        Icon(Icons.emoji_events_rounded, size: 100, color: appState.primaryColor),
+                        const SizedBox(height: 24),
+                        Text(
+                          'Поздравляю с достижением цели, ${widget.userName}',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Ты молодец!',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                        const Spacer(),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: appState.primaryColor,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                            ),
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text('Ура!', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // (2) Кнопка "назад" в левом верхнем углу
+                  Positioned(
+                    top: 4,
+                    left: 4,
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.arrow_back_rounded,
+                        color: appState.isDark ? Colors.white : Colors.black87,
+                      ),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _updateGoal(String newTitle, double newTarget, {double? dailyAllowance, String? currency}) async {
+    setState(() {
+      goals[currentGoalIndex].goalTitle = newTitle;
+      goals[currentGoalIndex].targetAmount = newTarget;
+      goals[currentGoalIndex].dailyAllowance = dailyAllowance;
+      if (currency != null) {
+        goals[currentGoalIndex].currency = currency;
+      }
+    });
+    _saveGoalData(currentGoalIndex);
+  }
+
+  // (5)+(6) Удаление цели: если она была достигнута — сохраняем её в
+  // "Историю желаний", саму цель не удаляем из списка, а сбрасываем к
+  // стандартным значениям (название, фото, сумма, карманные).
+  Future<void> _deleteGoal(int index) async {
+    final goal = goals[index];
+    final wasAchieved = goal.targetAmount > 0 && goal.currentAmount >= goal.targetAmount;
+    if (wasAchieved) {
+      _wishHistory.insert(0, {
+        'title': goal.goalTitle,
+        'amount': goal.targetAmount,
+        'currency': goal.currency,
+        'date': DateTime.now().toIso8601String(),
+      });
+      await _saveWishHistory();
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('goal_image_path_$index');
+    await prefs.remove('daily_allowance_$index');
+    setState(() {
+      goals[index].goalTitle = _ordinalGoalName(index + 1);
+      goals[index].targetAmount = 0;
+      goals[index].currentAmount = 0;
+      goals[index].imagePath = null;
+      goals[index].dailyAllowance = null;
+      goals[index].currency = '₽';
+      goals[index].history = [];
+    });
+    await _saveGoalData(index);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(wasAchieved ? 'Цель удалена и сохранена в истории желаний' : 'Цель сброшена')),
+      );
+    }
+  }
+
+  void _showComingSoonBottomSheet(String title, String description) {
+    showModalBottomSheet(
       context: context,
-      barrierDismissible: false, // Защита от закрытия тапом вне окна
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
       builder: (context) {
-        return AlertDialog(
-          title: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Режим разработчика'),
-              IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () => Navigator.pop(context), // Выход только по крестику
+              Icon(Icons.hourglass_top_rounded, size: 48, color: appState.primaryColor),
+              const SizedBox(height: 12),
+              const Text('Скоро появится', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
+              const SizedBox(height: 8),
+              Text(
+                description,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
               ),
             ],
           ),
-          content: TextField(
-            controller: passController,
-            obscureText: true,
-            decoration: const InputDecoration(hintText: 'Введите пароль'),
-          ),
-          actions: [
-            ElevatedButton(
-              onPressed: () async {
-                if (passController.text == '1234') {
-                  final prefs = await SharedPreferences.getInstance();
-                  await prefs.setBool('dev_mode_enabled', true);
-                  setState(() {
-                    _devModeEnabled = true;
-                  });
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Режим разработчика успешно активирован!')),
-                  );
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Неверный пароль')),
-                  );
-                }
-              },
-              child: const Text('Войти'),
-            ),
-          ],
         );
       },
+    );
+  }
+
+  // (1)+(7) Таблица лидеров: сортировка по убыванию суммы (при равенстве —
+  // по имени А-Я) и удаление доната доступно только в режиме разработчика.
+  void _showLeaderboardModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Container(
+          padding: const EdgeInsets.all(24.0),
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.7,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.volunteer_activism_rounded, size: 48, color: appState.primaryColor),
+              const SizedBox(height: 12),
+              const Text('Таблица лидеров', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text('Пожертвования', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
+              const SizedBox(height: 8),
+              const Text(
+                'Сравнение накоплений и достижения других пользователей!',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance.collection('donations').snapshots(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return const Center(child: Text('Ошибка загрузки данных'));
+                    }
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    final docs = snapshot.data?.docs.toList() ?? [];
+                    if (docs.isEmpty) {
+                      return const Center(
+                        child: Text('Пока нет пожертвований', style: TextStyle(color: Colors.grey)),
+                      );
+                    }
+                    // Сортировка: сумма по убыванию, при равенстве — имя А-Я
+                    docs.sort((a, b) {
+                      final da = a.data() as Map<String, dynamic>;
+                      final db = b.data() as Map<String, dynamic>;
+                      final amtA = (da['amount'] ?? 0) as num;
+                      final amtB = (db['amount'] ?? 0) as num;
+                      if (amtB != amtA) return amtB.compareTo(amtA);
+                      final nameA = (da['name'] ?? '').toString().toLowerCase();
+                      final nameB = (db['name'] ?? '').toString().toLowerCase();
+                      return nameA.compareTo(nameB);
+                    });
+                    return ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: docs.length,
+                      itemBuilder: (context, index) {
+                        final data = docs[index].data() as Map<String, dynamic>;
+                        final name = data['name'] ?? 'Аноним';
+                        final amount = data['amount'] ?? 0;
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: appState.primaryColor.withOpacity(0.15),
+                            child: Text(
+                              '${index + 1}',
+                              style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '$amount ₽',
+                                style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 16),
+                              ),
+                              if (_devModeEnabled) ...[
+                                const SizedBox(width: 8),
+                                GestureDetector(
+                                  onTap: () => _confirmDeleteDonation(docs[index].id),
+                                  child: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                                ),
+                              ],
+                            ],
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // (1) Подтверждение удаления доната (доступно только в режиме разработчика)
+  void _confirmDeleteDonation(String docId) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Удалить пожертвование?'),
+        content: const Text('Это действие нельзя отменить.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              try {
+                await FirebaseFirestore.instance.collection('donations').doc(docId).delete();
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Ошибка удаления: $e')),
+                  );
+                }
+              }
+            },
+            child: const Text('Удалить', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSupportModal() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.favorite, size: 48, color: appState.primaryColor),
+              const SizedBox(height: 12),
+              const Text('Спасибо!', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text('Поддержать проект', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
+              const SizedBox(height: 8),
+              const Text(
+                'Сбербанк: 2202206253667492',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // Пасхалка: 10 тапов по имени в шапке открывают ввод кода разработчика
+  void _handleNameTap() {
+    _nameTapCount++;
+    if (_nameTapCount >= 10) {
+      _nameTapCount = 0;
+      _showDevCodeModal();
+    }
+  }
+
+  // (10) Модалка ввода кода теперь не закрывается случайно от лишнего тапа:
+  // isDismissible/enableDrag выключены, выйти можно только через крестик.
+  void _showDevCodeModal() {
+    final codeController = TextEditingController();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            top: 8,
+            left: 24,
+            right: 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton(
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ),
+              CircleAvatar(
+                radius: 28,
+                backgroundColor: appState.primaryColor.withOpacity(0.15),
+                child: Icon(Icons.lock_outline_rounded, size: 28, color: appState.primaryColor),
+              ),
+              const SizedBox(height: 16),
+              const Text('Режим разработчика', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              const Text(
+                'Введите код доступа',
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              TextField(
+                controller: codeController,
+                obscureText: true,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                autofocus: true,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 26, letterSpacing: 10, fontWeight: FontWeight.bold),
+                decoration: InputDecoration(
+                  counterText: '',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () {
+                    if (codeController.text.trim() == '838995') {
+                      Navigator.pop(context);
+                      _enableDevMode();
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Неверный код')),
+                      );
+                    }
+                  },
+                  child: const Text('Подтвердить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _enableDevMode() async {
+    setState(() {
+      _devModeEnabled = true;
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('dev_mode_enabled', true);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Режим разработчика активирован!')),
+      );
+    }
+  }
+
+  // (3) Выход из режима разработчика (кнопка в настройках)
+  Future<void> _disableDevMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('dev_mode_enabled', false);
+    setState(() {
+      _devModeEnabled = false;
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Режим разработчика выключен')),
+      );
+    }
+  }
+
+  // Добавление пожертвования в общую базу (Firestore) — видно на всех
+  // устройствах, а не только локально.
+  void _showAddDonationModal() {
+    final donorNameController = TextEditingController();
+    final donorAmountController = TextEditingController();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            top: 24,
+            left: 24,
+            right: 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Добавить пожертвование', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              TextField(
+                controller: donorNameController,
+                decoration: InputDecoration(
+                  labelText: 'Кто отправил',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: donorAmountController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Сумма (в рублях)',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () async {
+                    final name = donorNameController.text.trim();
+                    final amount = double.tryParse(donorAmountController.text.trim()) ?? 0;
+                    if (name.isEmpty || amount <= 0) return;
+                    try {
+                      await FirebaseFirestore.instance.collection('donations').add({
+                        'name': name,
+                        'amount': amount,
+                        'timestamp': FieldValue.serverTimestamp(),
+                      });
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Пожертвование добавлено для всех пользователей')),
+                        );
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Ошибка: Firebase не настроен ($e)')),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // (9) Сообщение разработчику: недоступно, если сам режим разработчика
+  // включён на этом устройстве.
+  void _showMessageDeveloperModal() {
+    final messageController = TextEditingController();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            top: 24,
+            left: 24,
+            right: 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Сообщить о баге / Идеи', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              const Text(
+                'Опишите проблему или идею — сообщение увидит разработчик.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: messageController,
+                maxLines: 4,
+                decoration: InputDecoration(
+                  labelText: 'Сообщение',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () async {
+                    final text = messageController.text.trim();
+                    if (text.isEmpty) return;
+                    final fullName = widget.userLastName.isNotEmpty
+                        ? '${widget.userName} ${widget.userLastName}'
+                        : widget.userName;
+                    try {
+                      await FirebaseFirestore.instance.collection('developer_messages').add({
+                        'name': fullName,
+                        'message': text,
+                        'timestamp': FieldValue.serverTimestamp(),
+                      });
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Сообщение отправлено, спасибо!')),
+                        );
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Ошибка отправки: $e')),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Отправить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // (9) Для разработчика: история всех сообщений от пользователей
+  void _showDeveloperMessagesModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Container(
+          padding: const EdgeInsets.all(24.0),
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.mail_outline_rounded, size: 48, color: appState.primaryColor),
+              const SizedBox(height: 12),
+              const Text('Сообщения от пользователей', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              Expanded(
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('developer_messages')
+                      .orderBy('timestamp', descending: true)
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return const Center(child: Text('Ошибка загрузки данных'));
+                    }
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    final docs = snapshot.data?.docs ?? [];
+                    if (docs.isEmpty) {
+                      return const Center(child: Text('Сообщений пока нет', style: TextStyle(color: Colors.grey)));
+                    }
+                    return ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: docs.length,
+                      separatorBuilder: (context, index) => const Divider(height: 20),
+                      itemBuilder: (context, index) {
+                        final data = docs[index].data() as Map<String, dynamic>;
+                        final name = data['name'] ?? 'Аноним';
+                        final message = data['message'] ?? '';
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(name, style: TextStyle(fontWeight: FontWeight.bold, color: appState.primaryColor)),
+                            const SizedBox(height: 4),
+                            Text(message, style: const TextStyle(fontSize: 13)),
+                          ],
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // (6) "История желаний" — достигнутые и позже удалённые цели
+  void _showWishHistoryModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Container(
+          padding: const EdgeInsets.all(24.0),
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.auto_awesome_rounded, size: 48, color: appState.primaryColor),
+              const SizedBox(height: 12),
+              const Text('История желаний', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              const Text(
+                'Достигнутые и удалённые мечты',
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: _wishHistory.isEmpty
+                    ? const Center(child: Text('Пока пусто', style: TextStyle(color: Colors.grey)))
+                    : ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: _wishHistory.length,
+                        separatorBuilder: (context, index) => const Divider(height: 20),
+                        itemBuilder: (context, index) {
+                          final item = _wishHistory[index];
+                          final title = item['title'] ?? '';
+                          final amount = item['amount'] ?? 0;
+                          final currency = item['currency'] ?? '₽';
+                          return Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(title.toString(), style: const TextStyle(fontWeight: FontWeight.w500)),
+                              ),
+                              Text(
+                                '$amount $currency',
+                                style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showSettingsModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            top: 24,
+            left: 24,
+            right: 24,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 16),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Тёмная тема'),
+                  value: appState.isDark,
+                  onChanged: (val) {
+                    appState.toggleTheme(val);
+                    Navigator.pop(context);
+                  },
+                ),
+                const SizedBox(height: 20),
+                const Text('Выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: List.generate(
+                    appState.lightColors.length,
+                    (index) => GestureDetector(
+                      onTap: () {
+                        appState.setColor(index);
+                        Navigator.pop(context);
+                      },
+                      child: CircleAvatar(
+                        radius: 18,
+                        backgroundColor: appState.isDark ? appState.darkColors[index] : appState.lightColors[index],
+                        child: appState.selectedColorIndex == index
+                            ? const Icon(Icons.check, color: Colors.white, size: 18)
+                            : null,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: appState.primaryColor,
+                      side: BorderSide(color: appState.primaryColor),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    onPressed: _shareApp,
+                    icon: const Icon(Icons.share_outlined),
+                    label: const Text('Поделиться приложением', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+                // (6) История желаний — доступна всем пользователям
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: appState.primaryColor,
+                      side: BorderSide(color: appState.primaryColor),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _showWishHistoryModal();
+                    },
+                    icon: const Icon(Icons.auto_awesome_outlined),
+                    label: const Text('История желаний', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+                if (_devModeEnabled) ...[
+                  const SizedBox(height: 20),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(Icons.verified_user_rounded, size: 16, color: appState.primaryColor),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Режим разработчика',
+                        style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: appState.primaryColor,
+                        side: BorderSide(color: appState.primaryColor),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _showAddDonationModal();
+                      },
+                      icon: const Icon(Icons.volunteer_activism_outlined),
+                      label: const Text('Добавить пожертвование', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  // (9) История сообщений от пользователей — только в dev-режиме
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: appState.primaryColor,
+                        side: BorderSide(color: appState.primaryColor),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _showDeveloperMessagesModal();
+                      },
+                      icon: const Icon(Icons.mail_outline_rounded),
+                      label: const Text('Сообщения от пользователей', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  // (3) Выход из режима разработчика
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.orange,
+                        side: const BorderSide(color: Colors.orange),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _disableDevMode();
+                      },
+                      icon: const Icon(Icons.logout_rounded),
+                      label: const Text('Выйти из режима разработчика', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                      side: const BorderSide(color: Colors.red),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      appState.resetAllData();
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(builder: (context) => const OnboardingScreen()),
+                      );
+                    },
+                    icon: const Icon(Icons.delete_forever_outlined),
+                    label: const Text('Сбросить все настройки', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showEditGoalModal() {
+    final goal = goals[currentGoalIndex];
+    final titleController = TextEditingController(text: goal.goalTitle);
+    final targetController = TextEditingController(text: goal.targetAmount.toStringAsFixed(0));
+    final allowanceController = TextEditingController(
+      text: goal.dailyAllowance != null ? goal.dailyAllowance!.toStringAsFixed(0) : '',
+    );
+    String selectedCurrency = goal.currency;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+                top: 24,
+                left: 24,
+                right: 24,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Изменить цель ${currentGoalIndex + 1}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: titleController,
+                      decoration: InputDecoration(
+                        labelText: 'Название цели',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: targetController,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: 'Целевая сумма',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text('Валюта цели', style: TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w400)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: ['₽', '€', '\$'].map((cur) {
+                        final selected = cur == selectedCurrency;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: GestureDetector(
+                            onTap: () => setModalState(() => selectedCurrency = cur),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: selected ? appState.primaryColor : appState.primaryColor.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Text(
+                                cur,
+                                style: TextStyle(
+                                  color: selected ? Colors.white : appState.primaryColor,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: allowanceController,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: 'Карманные в день (необязательно)',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: appState.primaryColor,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () {
+                          final newTitle = titleController.text.trim();
+                          final newTarget = double.tryParse(targetController.text.trim()) ?? goal.targetAmount;
+                          final allowanceText = allowanceController.text.trim();
+                          final newAllowance = allowanceText.isEmpty ? null : double.tryParse(allowanceText);
+                          if (newTitle.isNotEmpty && newTarget >= 0) {
+                            _updateGoal(newTitle, newTarget, dailyAllowance: newAllowance, currency: selectedCurrency);
+                            Navigator.pop(context);
+                          }
+                        },
+                        child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                    // (5) Удаление цели — сбрасывает название/сумму/фото,
+                    // саму цель (её слот) не удаляет полностью.
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red,
+                          side: const BorderSide(color: Colors.red),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () {
+                          showDialog(
+                            context: context,
+                            builder: (dialogContext) => AlertDialog(
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                              title: const Text('Удалить цель?'),
+                              content: const Text(
+                                'Название, сумма и фото сбросятся к стандартным. Если цель была достигнута, она сохранится в «Истории желаний».',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(dialogContext),
+                                  child: const Text('Отмена'),
+                                ),
+                                TextButton(
+                                  onPressed: () {
+                                    Navigator.pop(dialogContext);
+                                    Navigator.pop(context);
+                                    _deleteGoal(currentGoalIndex);
+                                  },
+                                  child: const Text('Удалить', style: TextStyle(color: Colors.red)),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('Удалить цель', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showTransactionBottomSheet(bool isAdding) {
+    final goal = goals[currentGoalIndex];
+    if (goal.targetAmount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Сначала укажите цену мечты!')),
+      );
+      return;
+    }
+
+    final controller = TextEditingController();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            top: 24,
+            left: 24,
+            right: 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                isAdding ? 'Пополнить копилку' : 'Потратить из копилки',
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'Сумма',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () {
+                    final val = double.tryParse(controller.text.trim()) ?? 0;
+                    if (val > 0) {
+                      Navigator.pop(context);
+                      _updateMoney(isAdding ? val : -val);
+                    }
+                  },
+                  child: Text(isAdding ? 'Добавить' : 'Списать', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  int _versionTapCount = 0;
+
+  void _handleVersionTap() {
+    _versionTapCount++;
+    if (_versionTapCount >= 5) {
+      _versionTapCount = 0;
+      _showEasterEggScreen();
+    }
+  }
+
+  void _showEasterEggScreen() {
+    final appState = MyApp.of(context)!;
+    Navigator.push(
+      context,
+      createAnimatedRoute(
+        Scaffold(
+          backgroundColor: appState.isDark ? const Color(0xFF121212) : Colors.white,
+          body: SafeArea(
+            child: Stack(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Spacer(),
+                      CircleAvatar(
+                        radius: 35,
+                        backgroundColor: appState.primaryColor.withOpacity(0.15),
+                        child: Icon(Icons.beach_access_rounded, size: 36, color: appState.primaryColor),
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Марат, главный разработчик этого приложения, заслуживает отдых на Бали',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                      ),
+                      const Spacer(),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: appState.primaryColor,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          ),
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Согласен', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(color: appState.primaryColor, width: 2),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          ),
+                          // Специально ничего не делает при нажатии — кнопка
+                          // "для вида", а не для реального выбора.
+                          onPressed: () {},
+                          child: Text(
+                            'Нет',
+                            style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // (2) Кнопка "назад" в левом верхнем углу
+                Positioned(
+                  top: 4,
+                  left: 4,
+                  child: IconButton(
+                    icon: Icon(
+                      Icons.arrow_back_rounded,
+                      color: appState.isDark ? Colors.white : Colors.black87,
+                    ),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final appState = MyApp.of(context)!;
-    final currentGoal = goals[currentGoalIndex];
-    final leaderboard = _getSortedLeaderboard();
+    final isDark = appState.isDark;
+    final fullName = widget.userLastName.isNotEmpty ? '${widget.userName} ${widget.userLastName}' : widget.userName;
+    final bool onAddSlide = currentGoalIndex >= goals.length;
 
     return Scaffold(
       appBar: AppBar(
-        // 10) Нажатие на имя 10 раз вызывает окно пароля
         title: GestureDetector(
-          onTap: () {
-            if (!_devModeEnabled) {
-              _nameTapCount++;
-              if (_nameTapCount >= 10) {
-                _nameTapCount = 0;
-                _devModeEnabled ? null : _showDevPasswordDialog();
-              }
-            }
-          },
-          child: Text('${widget.userName} (${currentGoal.goalTitle})'),
+          onTap: _handleNameTap,
+          behavior: HitTestBehavior.opaque,
+          child: Text(fullName, style: const TextStyle(fontWeight: FontWeight.bold)),
+        ),
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                appState.primaryColor.withOpacity(0.35),
+                isDark ? const Color(0xFF121212) : const Color(0xFFFBF8FF),
+              ],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
+          ),
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                createAnimatedRoute(SettingsScreen(
-                  userName: widget.userName,
-                  userLastName: widget.userLastName,
-                  completedWishesHistory: completedWishesHistory,
-                  developerMessages: developerMessages,
-                  devModeEnabled: _devModeEnabled,
-                  onDevModeChanged: (val) async {
-                    setState(() {
-                      _devModeEnabled = val;
-                    });
-                    final prefs = await SharedPreferences.getInstance();
-                    await prefs.setBool('dev_mode_enabled', val);
-                  },
-                  onDeleteDonation: (goalIdx, historyIdx) {
-                    setState(() {
-                      goals[goalIdx].history.removeAt(historyIdx);
-                    });
-                    _saveGoalData(goalIdx);
-                  },
-                  goals: goals,
-                  onResetGoal: _resetCurrentGoal,
-                )),
-              );
-              _loadAllGoals();
-            },
+            icon: const Icon(Icons.leaderboard_outlined),
+            onPressed: _showLeaderboardModal,
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: _showSettingsModal,
           ),
         ],
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Карточка цели
-              Card(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.between,
-                        children: [
-                          Text(currentGoal.goalTitle, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                          IconButton(
-                            icon: const Icon(Icons.edit),
-                            onPressed: () {
-                              // Диалог изменения/сброса цели
-                              showDialog(
-                                context: context,
-                                builder: (ctx) => AlertDialog(
-                                  title: const Text('Управление целью'),
-                                  content: const Text('Хотите сбросить текущую цель и перенести ее в историю желаний?'),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () => Navigator.pop(ctx),
-                                      child: const Text('Отмена'),
-                                    ),
-                                    ElevatedButton(
-                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-                                      onPressed: () {
-                                        Navigator.pop(ctx);
-                                        _resetCurrentGoal();
-                                      },
-                                      child: const Text('Сбросить цель (Удалить)'),
-                                    ),
-                                  ],
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Свайпаемый блок целей + последний слайд — добавление новой цели
+            SizedBox(
+              height: 300,
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: goals.length + 1,
+                onPageChanged: (index) {
+                  setState(() {
+                    currentGoalIndex = index;
+                  });
+                },
+                itemBuilder: (context, index) {
+                  if (index == goals.length) {
+                    // Слайд с кнопкой добавления новой цели
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                          borderRadius: BorderRadius.circular(24),
+                          boxShadow: [
+                            if (!isDark)
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.04),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                          ],
+                        ),
+                        child: Center(
+                          child: GestureDetector(
+                            onTap: _addNewGoal,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                CircleAvatar(
+                                  radius: 32,
+                                  backgroundColor: appState.primaryColor.withOpacity(0.12),
+                                  child: Icon(Icons.add, size: 36, color: appState.primaryColor),
                                 ),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      Text('${currentGoal.currentAmount} / ${currentGoal.targetAmount} ${currentGoal.currency}',
-                          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 16),
-                      
-                      // 4) Плавная двунаправленная анимация истории операций
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('История операций', style: TextStyle(fontWeight: FontWeight.bold)),
-                          IconButton(
-                            icon: Icon(_isHistoryExpanded ? Icons.expand_less : Icons.expand_more),
-                            onPressed: _toggleHistoryAnimation,
-                          ),
-                        ],
-                      ),
-                      SizeTransition(
-                        sizeFactor: _historyAnimation,
-                        child: Container(
-                          margin: const EdgeInsets.symmetric(vertical: 8),
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: currentGoal.history.isEmpty
-                              .toString() == 'true' && currentGoal.history.isEmpty
-                              ? const Text('История пуста')
-                              : Column(
-                                  children: currentGoal.history.map((h) => ListTile(
-                                    title: Text(h),
-                                    dense: true,
-                                  )).toList(),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Добавить цель',
+                                  style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 14),
                                 ),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
+                    );
+                  }
 
-              // 7) Таблица лидеров (сортированная)
-              const Text('Таблица лидеров', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              leaderboard.isEmpty
-                  ? const Text('Пока нет донатов')
-                  : ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: leaderboard.length,
-                      itemBuilder: (context, index) {
-                        final item = leaderboard[index];
-                        return ListTile(
-                          leading: CircleAvatar(child: Text('${index + 1}')),
-                          title: Text(item['name']),
-                          trailing: Text('${item['amount']} ₽', style: const TextStyle(fontWeight: FontWeight.bold)),
-                        );
-                      },
+                  final goal = goals[index];
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                        borderRadius: BorderRadius.circular(24),
+                        boxShadow: [
+                          if (!isDark)
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.04),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                        ],
+                      ),
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: _pickImage,
+                              child: goal.imagePath != null
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(16),
+                                      child: Stack(
+                                        fit: StackFit.expand,
+                                        children: [
+                                          // Размытая увеличенная копия фото — заполняет весь блок
+                                          Image.file(
+                                            File(goal.imagePath!),
+                                            fit: BoxFit.cover,
+                                          ),
+                                          BackdropFilter(
+                                            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                                            child: Container(
+                                              color: Colors.black.withOpacity(0.12),
+                                            ),
+                                          ),
+                                          // Чёткое фото поверх, без обрезки
+                                          Center(
+                                            child: Image.file(
+                                              File(goal.imagePath!),
+                                              fit: BoxFit.contain,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  : Container(
+                                      width: double.infinity,
+                                      decoration: BoxDecoration(
+                                        color: appState.primaryColor.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(16),
+                                      ),
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.add_a_photo_outlined, color: appState.primaryColor, size: 36),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            'Цель ${index + 1}: Нажмите для фото',
+                                            style: TextStyle(color: appState.primaryColor, fontSize: 12, fontWeight: FontWeight.bold),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            goal.goalTitle,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ${goal.currency}',
+                            style: TextStyle(fontSize: 18, color: appState.primaryColor, fontWeight: FontWeight.bold),
+                          ),
+                          if (goal.dailyAllowance != null && goal.dailyAllowance! > 0) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              'Карманные: ${goal.dailyAllowance!.toInt()} ${goal.currency}/день',
+                              style: const TextStyle(fontSize: 11, color: Colors.grey),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
-              const SizedBox(height: 30),
-
-              // Пасхалка с версией
-              Center(
-                child: TextButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      createAnimatedRoute(const VersionEasterEggScreen()),
-                    );
-                  },
-                  child: const Text('Версия 1.0.0 (Пасхалка)'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// 2) Экран пасхалки с версией и кнопкой Назад слева вверху
-class VersionEasterEggScreen extends StatelessWidget {
-  const VersionEasterEggScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text('Пасхалка версии'),
-      ),
-      body: const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24.0),
-          child: Text(
-            'Поздравляем с окончанием цели! Вы великолепны и успешно добрались до пасхалки!',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// Экран настроек
-class SettingsScreen extends StatefulWidget {
-  final String userName;
-  final String userLastName;
-  final List<Map<String, String>> completedWishesHistory;
-  final List<Map<String, String>> developerMessages;
-  final bool devModeEnabled;
-  final ValueChanged<bool> onDevModeChanged;
-  final Function(int goalIndex, int historyIndex) onDeleteDonation;
-  final List<GoalData> goals;
-  final VoidCallback onResetGoal;
-
-  const SettingsScreen({
-    super.key,
-    required this.userName,
-    required this.userLastName,
-    required this.completedWishesHistory,
-    required this.developerMessages,
-    required this.devModeEnabled,
-    required this.onDevModeChanged,
-    required this.onDeleteDonation,
-    required this.goals,
-    required this.onResetGoal,
-  });
-
-  @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends State<SettingsScreen> {
-  final TextEditingController _msgController = TextEditingController();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Настройки'),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // 3) Кнопка выхода из режима разработчика в настройках
-          if (widget.devModeEnabled)
-            Card(
-              color: Colors.green.withOpacity(0.1),
-              child: ListTile(
-                title: const Text('Режим разработчика активен', style: TextStyle(fontWeight: FontWeight.bold)),
-                trailing: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-                  onPressed: () {
-                    widget.onDevModeChanged(false);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Режим разработчика выключен')),
-                    );
-                  },
-                  child: const Text('Выйти'),
-                ),
+                  );
+                },
               ),
             ),
-          const SizedBox(height: 10),
+            const SizedBox(height: 10),
+            // Индикатор точек для свайпа целей (включая слайд добавления)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(goals.length + 1, (index) {
+                return Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: currentGoalIndex == index ? 16 : 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: currentGoalIndex == index ? appState.primaryColor : Colors.grey.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                );
+              }),
+            ),
+            const SizedBox(height: 16),
 
-          // 6) История желаний в настройках
-          const Text('История желаний', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          widget.completedWishesHistory.isEmpty
-              .toString() == 'true' && widget.completedWishesHistory.isEmpty
-              ? const Text('Пока нет завершенных целей')
-              : ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: widget.completedWishesHistory.length,
-                  itemBuilder: (context, index) {
-                    final wish = widget.completedWishesHistory[index];
-                    return ListTile(
-                      leading: const Icon(Icons.check_circle_outline),
-                      title: Text(wish['title'] ?? ''),
-                      subtitle: Text('Дата достижения/сброса: ${wish['date']}'),
-                    );
-                  },
-                ),
-          const Divider(height: 30),
-
-          // 9) Сообщение разработчику (недоступно если режим разработчика включен)
-          const Text('Сообщение разработчику', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          widget.devModeEnabled
-              ? const Text('Функция отправки недоступна, так как включен режим разработчика.', style: TextStyle(color: Colors.orange))
-              : Column(
-                  children: [
-                    TextField(
-                      controller: _msgController,
-                      maxLines: 3,
-                      decoration: InputDecoration(
-                        hintText: 'Опишите баг или предложите идею...',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            if (!onAddSlide) ...[
+              Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: SizedBox(
+                      height: 48,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: appState.primaryColor,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () => _showTransactionBottomSheet(true),
+                        icon: const Icon(Icons.add, size: 20),
+                        label: const Text('Пополнить', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    ElevatedButton(
-                      onPressed: () async {
-                        if (_msgController.text.trim().isNotEmpty) {
-                          widget.developerMessages.add({
-                            'message': _msgController.text.trim(),
-                            'time': DateTime.now().toString().substring(0, 16),
-                          });
-                          final prefs = await SharedPreferences.getInstance();
-                          await prefs.setStringList('dev_msg_texts', widget.developerMessages.map((e) => e['message']!).toList());
-                          await prefs.setStringList('dev_msg_times', widget.developerMessages.map((e) => e['time']!).toList());
-                          _msgController.clear();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Сообщение успешно отправлено разработчику!')),
-                          );
-                          setState(() {});
-                        }
-                      },
-                      child: const Text('Отправить'),
-                    ),
-                  ],
-                ),
-
-          // 9) История писем для разработчика в настройках
-          if (widget.devModeEnabled) ...[
-            const Divider(height: 30),
-            const Text('История входящих писем (Режим разработчика)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.purple)),
-            const SizedBox(height: 8),
-            widget.developerMessages.isEmpty
-                ? const Text('Писем пока нет')
-                : ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: widget.developerMessages.length,
-                    itemBuilder: (context, index) {
-                      final msg = widget.developerMessages[index];
-                      return Card(
-                        child: ListTile(
-                          title: Text(msg['message'] ?? ''),
-                          subtitle: Text(msg['time'] ?? ''),
-                        ),
-                      );
-                    },
                   ),
-          ],
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 2,
+                    child: SizedBox(
+                      height: 48,
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          side: BorderSide(color: appState.primaryColor, width: 2),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () => _showTransactionBottomSheet(false),
+                        child: Text(
+                          'Потратил',
+                          style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: _showEditGoalModal,
+                    child: CircleAvatar(
+                      radius: 24,
+                      backgroundColor: appState.primaryColor,
+                      child: const Icon(Icons.edit_outlined, color: Colors.white, size: 20),
+                    ),
+                  ),
+                ],
+              ),
 
-          // 1) Удаление донатов в режиме разработчика
-          if (widget.devModeEnabled) ...[
-            const Divider(height: 30),
-            const Text('Управление донатами (Режим разработчика)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red)),
-            const SizedBox(height: 8),
-            ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: widget.goals.length,
-              itemBuilder: (context, goalIndex) {
-                final goal = widget.goals[goalIndex];
-                if (goal.history.isEmpty) return const SizedBox.shrink();
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Цель: ${goal.goalTitle}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ...List.generate(goal.history.length, (histIndex) {
-                      final hist = goal.history[histIndex];
-                      return ListTile(
-                        title: Text(hist),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
-                          onPressed: () {
-                            widget.onDeleteDonation(goalIndex, histIndex);
-                            setState(() {});
+              const SizedBox(height: 12),
+
+              // Кнопки быстрого пополнения
+              Row(
+                children: <int>[100, 500, 1000].map((amount) {
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          side: BorderSide(color: appState.primaryColor.withOpacity(0.5)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                        onPressed: () => _quickAdd(amount.toDouble()),
+                        child: Text(
+                          '+$amount ${goals[currentGoalIndex].currency}',
+                          style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+
+              const SizedBox(height: 24),
+
+              const Text('История операций', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              // AnimatedSize — плавно меняет высоту блока и при увеличении, и
+              // при уменьшении истории (например, после свайп-удаления записи).
+              AnimatedSize(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeInOut,
+                alignment: Alignment.topCenter,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: goals[currentGoalIndex].history.isEmpty
+                      ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12.0),
+                            child: Text(
+                              'Операций пока нет',
+                              style: TextStyle(color: Colors.grey, fontSize: 14),
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: goals[currentGoalIndex].history.length,
+                          separatorBuilder: (context, index) => const Divider(height: 16),
+                          itemBuilder: (context, index) {
+                            final item = goals[currentGoalIndex].history[index];
+                            final isAdd = item.startsWith('+');
+                            // (4) Свайп влево — удалить запись; общая высота
+                            // блока (AnimatedSize) плавно уменьшится сама.
+                            return Dismissible(
+                              key: ValueKey('hist_${currentGoalIndex}_${index}_$item'),
+                              direction: DismissDirection.endToStart,
+                              onDismissed: (_) => _deleteHistoryEntry(index),
+                              background: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.only(right: 4),
+                                child: const Icon(Icons.delete_outline, color: Colors.red),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    isAdd ? 'Пополнение' : 'Списание',
+                                    style: const TextStyle(fontWeight: FontWeight.w500),
+                                  ),
+                                  Text(
+                                    item,
+                                    style: TextStyle(
+                                      color: isAdd ? Colors.green : Colors.red,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
                           },
                         ),
-                      );
-                    }),
-                  ],
-                );
-              },
+                ),
+              ),
+
+              const SizedBox(height: 24),
+            ] else ...[
+              Center(
+                child: Text(
+                  'Нажмите «+», чтобы добавить новую цель',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+
+            // Карточка «Поддержать проект»
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.favorite, color: appState.primaryColor, size: 36),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Поддержать проект',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Приложение абсолютно бесплатное и без подписок!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 16),
+                  OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      side: BorderSide(color: isDark ? Colors.white38 : Colors.grey[700]!),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    ),
+                    onPressed: _showSupportModal,
+                    child: Text(
+                      'Отправить донат',
+                      style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
+                    ),
+                  )
+                ],
+              ),
             ),
+
+            const SizedBox(height: 16),
+
+            // Карточка «Наш телеграм канал» — теперь кнопка реально отправляет
+            // сообщение разработчику; недоступна на устройстве самого разработчика.
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.send_rounded, color: appState.primaryColor, size: 36),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Наш телеграм канал',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Сообщайте о багах, делитесь идеями и следите за обновлениями!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 16),
+                  OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      side: BorderSide(color: isDark ? Colors.white38 : Colors.grey[700]!),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    ),
+                    onPressed: _devModeEnabled
+                        ? null
+                        : _showMessageDeveloperModal,
+                    child: Text(
+                      _devModeEnabled ? 'Недоступно (вы разработчик)' : 'Сообщить о баге / Идеи',
+                      style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
+                    ),
+                  )
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // Строка с версией приложения в самом низу — 5 тапов открывают пасхалку
+            Center(
+              child: GestureDetector(
+                onTap: _handleVersionTap,
+                behavior: HitTestBehavior.opaque,
+                child: const Text(
+                  'Я Коплю: мечты v.2.3 (beta)',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
           ],
-        ],
+        ),
       ),
     );
   }
