@@ -9,15 +9,20 @@ import 'dart:ui';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Firebase нужен для режима разработчика (пожертвования видны на всех
-  // устройствах). Если проект ещё не настроен через `flutterfire configure`,
-  // оборачиваем в try/catch, чтобы остальное приложение работало без сбоев.
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp(
+      options: const FirebaseOptions(
+        apiKey: "ВСТАВЬ_СЮДА_apiKey",
+        appId: "ВСТАВЬ_СЮДА_appId",
+        messagingSenderId: "ВСТАВЬ_СЮДА_messagingSenderId",
+        projectId: "ВСТАВЬ_СЮДА_projectId",
+        storageBucket: "ВСТАВЬ_СЮДА_storageBucket",
+      ),
+    );
   } catch (e) {
-    // ignore: avoid_print
-    print('Firebase init failed (ещё не настроен?): $e');
+    print('firebase init failed: $e');
   }
+  
   final prefs = await SharedPreferences.getInstance();
   final isRegistered = prefs.getBool('is_registered') ?? false;
   final savedName = prefs.getString('user_name') ?? '';
@@ -64,8 +69,6 @@ class _MyAppState extends State<MyApp> {
   late String userLastName;
   late bool isRegistered;
 
-  // Убран один из двух одинаковых по смыслу голубых/синих оттенков —
-  // осталось 5 цветов вместо 6.
   final List<Color> lightColors = [
     Colors.red,
     Colors.orange,
@@ -140,7 +143,7 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Я Коплю: мечты',
+      title: 'я копим: мечты',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: isDark ? Brightness.dark : Brightness.light,
@@ -213,13 +216,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ),
               const SizedBox(height: 16),
               const Text(
-                'Добро пожаловать в\n«Я Коплю: мечты»',
+                'добро пожаловать в\n«я копим: мечты»',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 6),
               Text(
-                'Твой личный помощник для достижения любых целей и мечт.',
+                'твой личный помощник для достижения любых целей.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600], fontSize: 13),
               ),
@@ -233,11 +236,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
                 child: Column(
                   children: [
-                    _buildFeatureItem(Icons.person_outline, 'Персонализация', 'Указывай имя и фамилию.', appState.primaryColor),
+                    _buildFeatureItem(Icons.person_outline, 'персонализация', 'указывай имя и фамилию.', appState.primaryColor),
                     const Divider(height: 16),
-                    _buildFeatureItem(Icons.image_outlined, 'Визуализация мечты', 'Добавляй фото двух целей.', appState.primaryColor),
+                    _buildFeatureItem(Icons.image_outlined, 'визуализация мечты', 'добавляй фото целей.', appState.primaryColor),
                     const Divider(height: 16),
-                    _buildFeatureItem(Icons.palette_outlined, 'Дизайн и темы', 'Выбирай любимый цвет темы.', appState.primaryColor),
+                    _buildFeatureItem(Icons.palette_outlined, 'дизайн и темы', 'выбирай любимый цвет темы.', appState.primaryColor),
                   ],
                 ),
               ),
@@ -252,12 +255,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Давай знакомиться', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    const Text('давай знакомиться', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                     const SizedBox(height: 12),
                     TextField(
                       controller: _nameController,
                       decoration: InputDecoration(
-                        labelText: 'Ваше имя *',
+                        labelText: 'ваше имя *',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                     ),
@@ -265,13 +268,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     TextField(
                       controller: _lastNameController,
                       decoration: InputDecoration(
-                        labelText: 'Фамилия (необязательно)',
+                        labelText: 'фамилия (необязательно)',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                     ),
                     const SizedBox(height: 16),
                     const Text(
-                      'Выберете цвет темы',
+                      'выберите цвет темы',
                       style: TextStyle(
                         fontSize: 13,
                         color: Colors.grey,
@@ -326,7 +329,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                           }
                         }
                       : null,
-                  child: const Text('Продолжить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  child: const Text('продолжить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -381,7 +384,7 @@ class WelcomeGreetingScreen extends StatelessWidget {
               const SizedBox(height: 20),
               Center(
                 child: Text(
-                  'Здравствуйте, $fullName!',
+                  'здравствуйте, $fullName!',
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
                 ),
@@ -402,7 +405,7 @@ class WelcomeGreetingScreen extends StatelessWidget {
                       createAnimatedRoute(HomeScreen(userName: userName, userLastName: userLastName)),
                     );
                   },
-                  child: const Text('Продолжить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  child: const Text('продолжить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -451,8 +454,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _devModeEnabled = false;
 
   List<GoalData> goals = [
-    GoalData(currentAmount: 0, targetAmount: 0, goalTitle: 'Первая мечта', history: []),
-    GoalData(currentAmount: 0, targetAmount: 0, goalTitle: 'Вторая мечта', history: []),
+    GoalData(currentAmount: 0, targetAmount: 0, goalTitle: 'первая мечта', history: []),
+    GoalData(currentAmount: 0, targetAmount: 0, goalTitle: 'вторая мечта', history: []),
   ];
 
   final ImagePicker _picker = ImagePicker();
@@ -463,21 +466,20 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadAllGoals();
   }
 
-  // Автоназвания для новых целей, которые пользователь добавляет через "+"
   String _ordinalGoalName(int number) {
     const names = {
-      1: 'Первая мечта',
-      2: 'Вторая мечта',
-      3: 'Третья мечта',
-      4: 'Четвертая мечта',
-      5: 'Пятая мечта',
-      6: 'Шестая мечта',
-      7: 'Седьмая мечта',
-      8: 'Восьмая мечта',
-      9: 'Девятая мечта',
-      10: 'Десятая мечта',
+      1: 'первая мечта',
+      2: 'вторая мечта',
+      3: 'третья мечта',
+      4: 'четвертая мечта',
+      5: 'пятая мечта',
+      6: 'шестая мечта',
+      7: 'седьмая мечта',
+      8: 'восьмая мечта',
+      9: 'девятая мечта',
+      10: 'десятая мечта',
     };
-    return names[number] ?? 'Мечта №$number';
+    return names[number] ?? 'мечта №$number';
   }
 
   Future<void> _loadAllGoals() async {
@@ -575,7 +577,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final goal = goals[currentGoalIndex];
     if (goal.targetAmount <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Сначала укажите цену мечты!')),
+        const SnackBar(content: Text('сначала укажите цену мечты!')),
       );
       return;
     }
@@ -583,11 +585,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _shareApp() {
-    // TODO: замени ссылку на реальную ссылку на google диск с apk
     const shareText =
-        'Привет! Я пользуюсь этим приложением. Присоединяйся!\n'
-        'Я Коплю: мечты\n'
-        'https://drive.google.com/YOUR_APK_LINK_HERE';
+        'привет! я пользуюсь этим приложением. присоединяйся!\n'
+        'я копим: мечты\n'
+        'https://drive.google.com/';
     Share.share(shareText);
   }
 
@@ -610,13 +611,13 @@ class _HomeScreenState extends State<HomeScreen> {
                     Icon(Icons.emoji_events_rounded, size: 100, color: appState.primaryColor),
                     const SizedBox(height: 24),
                     Text(
-                      'Поздравляю с достижением цели, ${widget.userName}',
+                      'поздравляю с достижением цели, ${widget.userName}',
                       textAlign: TextAlign.center,
                       style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 12),
                     const Text(
-                      'Ты молодец!',
+                      'ты молодец!',
                       style: TextStyle(fontSize: 12, color: Colors.grey),
                     ),
                     const Spacer(),
@@ -630,7 +631,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                         ),
                         onPressed: () => Navigator.pop(context),
-                        child: const Text('Ура!', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        child: const Text('ура!', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ],
@@ -670,7 +671,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Icon(Icons.hourglass_top_rounded, size: 48, color: appState.primaryColor),
               const SizedBox(height: 12),
-              const Text('Скоро появится', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const Text('скоро появится', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
               const SizedBox(height: 8),
@@ -690,7 +691,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   ),
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                  child: const Text('понятно', style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -715,12 +716,12 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Icon(Icons.volunteer_activism_rounded, size: 48, color: appState.primaryColor),
               const SizedBox(height: 12),
-              const Text('Таблица лидеров', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const Text('таблица лидеров', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              Text('Пожертвования', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
+              Text('пожертвования', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
               const SizedBox(height: 8),
               const Text(
-                'Сравнение накоплений и достижения других пользователей!',
+                'сравнение накоплений других пользователей!',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 13, color: Colors.grey),
               ),
@@ -735,7 +736,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   ),
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                  child: const Text('понятно', style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -760,12 +761,12 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Icon(Icons.favorite, size: 48, color: appState.primaryColor),
               const SizedBox(height: 12),
-              const Text('Спасибо!', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const Text('спасибо!', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              Text('Поддержать проект', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
+              Text('поддержать проект', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
               const SizedBox(height: 8),
               const Text(
-                'Сбербанк: 2202206253667492',
+                'сбербанк: 2202206253667492',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 13, color: Colors.grey),
               ),
@@ -780,7 +781,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   ),
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                  child: const Text('понятно', style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -790,7 +791,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Пасхалка: 10 тапов по имени в шапке открывают ввод кода разработчика
   void _handleNameTap() {
     _nameTapCount++;
     if (_nameTapCount >= 10) {
@@ -825,10 +825,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Icon(Icons.lock_outline_rounded, size: 28, color: appState.primaryColor),
               ),
               const SizedBox(height: 16),
-              const Text('Режим разработчика', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const Text('режим разработчика', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               const SizedBox(height: 6),
               const Text(
-                'Введите код доступа',
+                'введите код доступа',
                 style: TextStyle(fontSize: 13, color: Colors.grey),
               ),
               const SizedBox(height: 20),
@@ -861,11 +861,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       _enableDevMode();
                     } else {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Неверный код')),
+                        const SnackBar(content: Text('неверный код')),
                       );
                     }
                   },
-                  child: const Text('Подтвердить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  child: const Text('подтвердить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -883,13 +883,11 @@ class _HomeScreenState extends State<HomeScreen> {
     await prefs.setBool('dev_mode_enabled', true);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Режим разработчика активирован!')),
+        const SnackBar(content: Text('режим разработчика активирован!')),
       );
     }
   }
 
-  // Добавление пожертвования в общую базу (Firestore) — видно на всех
-  // устройствах, а не только локально.
   void _showAddDonationModal() {
     final donorNameController = TextEditingController();
     final donorAmountController = TextEditingController();
@@ -912,12 +910,12 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Добавить пожертвование', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              const Text('добавить пожертвование', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
               TextField(
                 controller: donorNameController,
                 decoration: InputDecoration(
-                  labelText: 'Кто отправил',
+                  labelText: 'кто отправил',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                 ),
               ),
@@ -926,7 +924,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 controller: donorAmountController,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
-                  labelText: 'Сумма (в рублях)',
+                  labelText: 'сумма (в рублях)',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                 ),
               ),
@@ -953,18 +951,18 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (context.mounted) {
                         Navigator.pop(context);
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Пожертвование добавлено для всех пользователей')),
+                          const SnackBar(content: Text('пожертвование добавлено')),
                         );
                       }
                     } catch (e) {
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Ошибка: Firebase не настроен ($e)')),
+                          SnackBar(content: Text('ошибка: $e')),
                         );
                       }
                     }
                   },
-                  child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  child: const Text('сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -995,11 +993,11 @@ class _HomeScreenState extends State<HomeScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const Text('настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 16),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Тёмная тема'),
+                  title: const Text('темная тема'),
                   value: appState.isDark,
                   onChanged: (val) {
                     appState.toggleTheme(val);
@@ -1007,7 +1005,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   },
                 ),
                 const SizedBox(height: 20),
-                const Text('Выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+                const Text('выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
                 const SizedBox(height: 12),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -1040,7 +1038,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     onPressed: _shareApp,
                     icon: const Icon(Icons.share_outlined),
-                    label: const Text('Поделиться приложением', style: TextStyle(fontWeight: FontWeight.bold)),
+                    label: const Text('поделиться приложением', style: TextStyle(fontWeight: FontWeight.bold)),
                   ),
                 ),
                 if (_devModeEnabled) ...[
@@ -1052,7 +1050,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       Icon(Icons.verified_user_rounded, size: 16, color: appState.primaryColor),
                       const SizedBox(width: 6),
                       Text(
-                        'Режим разработчика',
+                        'режим разработчика',
                         style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
                       ),
                     ],
@@ -1072,7 +1070,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         _showAddDonationModal();
                       },
                       icon: const Icon(Icons.volunteer_activism_outlined),
-                      label: const Text('Добавить пожертвование', style: TextStyle(fontWeight: FontWeight.bold)),
+                      label: const Text('добавить пожертвование', style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ],
@@ -1095,7 +1093,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       );
                     },
                     icon: const Icon(Icons.delete_forever_outlined),
-                    label: const Text('Сбросить все настройки', style: TextStyle(fontWeight: FontWeight.bold)),
+                    label: const Text('сбросить все настройки', style: TextStyle(fontWeight: FontWeight.bold)),
                   ),
                 ),
               ],
@@ -1137,12 +1135,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Изменить цель ${currentGoalIndex + 1}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                    Text('изменить цель ${currentGoalIndex + 1}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 16),
                     TextField(
                       controller: titleController,
                       decoration: InputDecoration(
-                        labelText: 'Название цели',
+                        labelText: 'название цели',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                     ),
@@ -1151,12 +1149,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       controller: targetController,
                       keyboardType: TextInputType.number,
                       decoration: InputDecoration(
-                        labelText: 'Целевая сумма',
+                        labelText: 'целевая сумма',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                     ),
                     const SizedBox(height: 16),
-                    const Text('Валюта цели', style: TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w400)),
+                    const Text('валюта цели', style: TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w400)),
                     const SizedBox(height: 8),
                     Row(
                       children: ['₽', '€', '\$'].map((cur) {
@@ -1188,7 +1186,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       controller: allowanceController,
                       keyboardType: TextInputType.number,
                       decoration: InputDecoration(
-                        labelText: 'Карманные в день (необязательно)',
+                        labelText: 'карманные в день (необязательно)',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                     ),
@@ -1212,7 +1210,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             Navigator.pop(context);
                           }
                         },
-                        child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        child: const Text('сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ],
@@ -1229,7 +1227,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final goal = goals[currentGoalIndex];
     if (goal.targetAmount <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Сначала укажите цену мечты!')),
+        const SnackBar(content: Text('сначала укажите цену мечты!')),
       );
       return;
     }
@@ -1255,7 +1253,7 @@ class _HomeScreenState extends State<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                isAdding ? 'Пополнить копилку' : 'Потратить из копилки',
+                isAdding ? 'пополнить копилку' : 'потратить из копилки',
                 style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 16),
@@ -1264,7 +1262,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 keyboardType: TextInputType.number,
                 autofocus: true,
                 decoration: InputDecoration(
-                  labelText: 'Сумма',
+                  labelText: 'сумма',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                 ),
               ),
@@ -1285,7 +1283,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       _updateMoney(isAdding ? val : -val);
                     }
                   },
-                  child: Text(isAdding ? 'Добавить' : 'Списать', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  child: Text(isAdding ? 'добавить' : 'списать', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -1326,7 +1324,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 24),
                   const Text(
-                    'Марат, главный разработчик этого приложения, заслуживает отдых на Бали',
+                    'марат, главный разработчик этого приложения, заслуживает отдых на бали',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                   ),
@@ -1341,7 +1339,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                       onPressed: () => Navigator.pop(context),
-                      child: const Text('Согласен', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      child: const Text('согласен', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -1353,11 +1351,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         side: BorderSide(color: appState.primaryColor, width: 2),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
-                      // Специально ничего не делает при нажатии — кнопка
-                      // "для вида", а не для реального выбора.
                       onPressed: () {},
                       child: Text(
-                        'Нет',
+                        'нет',
                         style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 16),
                       ),
                     ),
@@ -1413,7 +1409,6 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Свайпаемый блок целей + последний слайд — добавление новой цели
             SizedBox(
               height: 300,
               child: PageView.builder(
@@ -1426,7 +1421,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
                 itemBuilder: (context, index) {
                   if (index == goals.length) {
-                    // Слайд с кнопкой добавления новой цели
                     return Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 4.0),
                       child: Container(
@@ -1457,7 +1451,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                                 const SizedBox(height: 12),
                                 Text(
-                                  'Добавить цель',
+                                  'добавить цель',
                                   style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 14),
                                 ),
                               ],
@@ -1497,7 +1491,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                       child: Stack(
                                         fit: StackFit.expand,
                                         children: [
-                                          // Размытая увеличенная копия фото — заполняет весь блок
                                           Image.file(
                                             File(goal.imagePath!),
                                             fit: BoxFit.cover,
@@ -1508,7 +1501,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                               color: Colors.black.withOpacity(0.12),
                                             ),
                                           ),
-                                          // Чёткое фото поверх, без обрезки
                                           Center(
                                             child: Image.file(
                                               File(goal.imagePath!),
@@ -1530,7 +1522,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                           Icon(Icons.add_a_photo_outlined, color: appState.primaryColor, size: 36),
                                           const SizedBox(height: 8),
                                           Text(
-                                            'Цель ${index + 1}: Нажмите для фото',
+                                            'цель ${index + 1}: нажми для фото',
                                             style: TextStyle(color: appState.primaryColor, fontSize: 12, fontWeight: FontWeight.bold),
                                           ),
                                         ],
@@ -1551,7 +1543,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           if (goal.dailyAllowance != null && goal.dailyAllowance! > 0) ...[
                             const SizedBox(height: 2),
                             Text(
-                              'Карманные: ${goal.dailyAllowance!.toInt()} ${goal.currency}/день',
+                              'карманные: ${goal.dailyAllowance!.toInt()} ${goal.currency}/день',
                               style: const TextStyle(fontSize: 11, color: Colors.grey),
                             ),
                           ],
@@ -1563,7 +1555,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: 10),
-            // Индикатор точек для свайпа целей (включая слайд добавления)
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: List.generate(goals.length + 1, (index) {
@@ -1595,7 +1586,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         onPressed: () => _showTransactionBottomSheet(true),
                         icon: const Icon(Icons.add, size: 20),
-                        label: const Text('Пополнить', style: TextStyle(fontWeight: FontWeight.bold)),
+                        label: const Text('пополнить', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ),
@@ -1612,7 +1603,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         onPressed: () => _showTransactionBottomSheet(false),
                         child: Text(
-                          'Потратил',
+                          'потратил',
                           style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold),
                         ),
                       ),
@@ -1632,7 +1623,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
               const SizedBox(height: 12),
 
-              // Кнопки быстрого пополнения
               Row(
                 children: <int>[100, 500, 1000].map((amount) {
                   return Expanded(
@@ -1657,10 +1647,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
               const SizedBox(height: 24),
 
-              const Text('История операций', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text('история операций', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
-              // AnimatedSize — плавно меняет высоту блока при переключении
-              // между целями с разной длиной истории (вместо резкого скачка).
               AnimatedSize(
                 duration: const Duration(milliseconds: 250),
                 curve: Curves.easeInOut,
@@ -1677,7 +1665,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: Padding(
                             padding: EdgeInsets.symmetric(vertical: 12.0),
                             child: Text(
-                              'Операций пока нет',
+                              'операций пока нет',
                               style: TextStyle(color: Colors.grey, fontSize: 14),
                             ),
                           ),
@@ -1694,7 +1682,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Text(
-                                  isAdd ? 'Пополнение' : 'Списание',
+                                  isAdd ? 'пополнение' : 'списание',
                                   style: const TextStyle(fontWeight: FontWeight.w500),
                                 ),
                                 Text(
@@ -1715,14 +1703,13 @@ class _HomeScreenState extends State<HomeScreen> {
             ] else ...[
               Center(
                 child: Text(
-                  'Нажмите «+», чтобы добавить новую цель',
+                  'нажмите «+», чтобы добавить новую цель',
                   style: TextStyle(color: Colors.grey[600], fontSize: 13),
                 ),
               ),
               const SizedBox(height: 24),
             ],
 
-            // Карточка «Поддержать проект»
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -1735,12 +1722,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   Icon(Icons.favorite, color: appState.primaryColor, size: 36),
                   const SizedBox(height: 12),
                   const Text(
-                    'Поддержать проект',
+                    'поддержать проект',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 4),
                   const Text(
-                    'Приложение абсолютно бесплатное и без подписок!',
+                    'приложение абсолютно бесплатное!',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
@@ -1753,7 +1740,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     onPressed: _showSupportModal,
                     child: Text(
-                      'Отправить донат',
+                      'отправить донат',
                       style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
                     ),
                   )
@@ -1763,7 +1750,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 16),
 
-            // Карточка «Наш телеграм канал»
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -1776,12 +1762,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   Icon(Icons.send_rounded, color: appState.primaryColor, size: 36),
                   const SizedBox(height: 12),
                   const Text(
-                    'Наш телеграм канал',
+                    'наш телеграм канал',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 4),
                   const Text(
-                    'Сообщайте о багах, делитесь идеями и следите за обновлениями!',
+                    'сообщайте о багах и делитесь идеями!',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
@@ -1793,11 +1779,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                     ),
                     onPressed: () => _showComingSoonBottomSheet(
-                      'Телеграм канал',
-                      'Наш официальный телеграм-канал с обновлениями откроется совсем скоро!',
+                      'телеграм канал',
+                      'наш официальный канал откроется совсем скоро!',
                     ),
                     child: Text(
-                      'Сообщить о баге / Идеи',
+                      'сообщить о баге / идеи',
                       style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
                     ),
                   )
@@ -1807,13 +1793,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 24),
 
-            // Строка с версией приложения в самом низу — 5 тапов открывают пасхалку
             Center(
               child: GestureDetector(
                 onTap: _handleVersionTap,
                 behavior: HitTestBehavior.opaque,
                 child: const Text(
-                  'Я Коплю: мечты v.2.3 (beta)',
+                  'я копим: мечты v.2.3 (beta)',
                   style: TextStyle(
                     fontSize: 13,
                     color: Colors.grey,
