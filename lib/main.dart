@@ -13,18 +13,15 @@ void main() async {
   // устройствах). Если проект ещё не настроен через `flutterfire configure`,
   // оборачиваем в try/catch, чтобы остальное приложение работало без сбоев.
   try {
-    // === ВСТАВЬ СЮДА СВОИ 5 ЗНАЧЕНИЙ ИЗ FIREBASE CONSOLE ===
-    // (Project settings → твоё Web-приложение → блок firebaseConfig)
     await Firebase.initializeApp(
       options: const FirebaseOptions(
-        apiKey: "ВСТАВЬ_СЮДА_apiKey",
-        appId: "ВСТАВЬ_СЮДА_appId",
-        messagingSenderId: "ВСТАВЬ_СЮДА_messagingSenderId",
-        projectId: "ВСТАВЬ_СЮДА_projectId",
-        storageBucket: "ВСТАВЬ_СЮДА_storageBucket",
+        apiKey: "AIzaSyCzk8zYO8vszPKBBomeeLx3cAiS9FSQNGs",
+        appId: "1:161097149149:web:1e836cc3814c5d5a81c934",
+        messagingSenderId: "161097149149",
+        projectId: "yakoplyu",
+        storageBucket: "yakoplyu.firebasestorage.app",
       ),
     );
-    // === КОНЕЦ БЛОКА С КЛЮЧАМИ ===
   } catch (e) {
     // ignore: avoid_print
     print('Firebase init failed (ещё не настроен?): $e');
@@ -714,13 +711,17 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showLeaderboardModal() {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
+        return Container(
           padding: const EdgeInsets.all(24.0),
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.7,
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -735,7 +736,53 @@ class _HomeScreenState extends State<HomeScreen> {
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 13, color: Colors.grey),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
+              Expanded(
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('donations')
+                      .orderBy('timestamp', descending: true)
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return const Center(child: Text('Ошибка загрузки данных'));
+                    }
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    final docs = snapshot.data?.docs ?? [];
+                    if (docs.isEmpty) {
+                      return const Center(
+                        child: Text('Пока нет пожертвований', style: TextStyle(color: Colors.grey)),
+                      );
+                    }
+                    return ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: docs.length,
+                      itemBuilder: (context, index) {
+                        final data = docs[index].data() as Map<String, dynamic>;
+                        final name = data['name'] ?? 'Аноним';
+                        final amount = data['amount'] ?? 0;
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: appState.primaryColor.withOpacity(0.15),
+                            child: Text(
+                              '${index + 1}',
+                              style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          trailing: Text(
+                            '$amount ₽',
+                            style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
                 height: 48,
