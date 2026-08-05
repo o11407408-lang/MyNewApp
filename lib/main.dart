@@ -931,30 +931,135 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // (1) Подтверждение удаления доната (доступно только в режиме разработчика)
   void _confirmDeleteDonation(String docId) {
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Удалить пожертвование?'),
-        content: const Text('Это действие нельзя отменить.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(dialogContext);
-              try {
-                await FirebaseFirestore.instance.collection('donations').doc(docId).delete();
-              } catch (e) {
-                _showAppSnackBar('Ошибка удаления: $e', isError: true);
-              }
-            },
-            child: const Text('Удалить', style: TextStyle(color: Colors.red)),
-          ),
-        ],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.delete_outline, size: 48, color: Colors.red),
+              const SizedBox(height: 12),
+              const Text('Удалить пожертвование?', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              const Text('Это действие нельзя отменить.', style: TextStyle(fontSize: 14, color: Colors.grey)),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: appState.primaryColor,
+                          side: BorderSide(color: appState.primaryColor),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Отмена', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () async {
+                          Navigator.pop(context);
+                          try {
+                            await FirebaseFirestore.instance.collection('donations').doc(docId).delete();
+                          } catch (e) {
+                            _showAppSnackBar('Ошибка удаления: $e', isError: true);
+                          }
+                        },
+                        child: const Text('Удалить', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // (1b) Подтверждение удаления сообщения от пользователя (только в dev-режиме)
+  void _confirmDeleteMessage(String docId) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.delete_outline, size: 48, color: Colors.red),
+              const SizedBox(height: 12),
+              const Text('Удалить сообщение?', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              const Text('Это действие нельзя отменить.', style: TextStyle(fontSize: 14, color: Colors.grey)),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: appState.primaryColor,
+                          side: BorderSide(color: appState.primaryColor),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Отмена', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () async {
+                          Navigator.pop(context);
+                          try {
+                            await FirebaseFirestore.instance.collection('developer_messages').doc(docId).delete();
+                          } catch (e) {
+                            _showAppSnackBar('Ошибка удаления: $e', isError: true);
+                          }
+                        },
+                        child: const Text('Удалить', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -1405,12 +1510,24 @@ class _HomeScreenState extends State<HomeScreen> {
                         final data = docs[index].data() as Map<String, dynamic>;
                         final name = data['name'] ?? 'Аноним';
                         final message = data['message'] ?? '';
-                        return Column(
+                        return Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(name, style: TextStyle(fontWeight: FontWeight.bold, color: appState.primaryColor)),
-                            const SizedBox(height: 4),
-                            Text(message, style: const TextStyle(fontSize: 13)),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(name, style: TextStyle(fontWeight: FontWeight.bold, color: appState.primaryColor)),
+                                  const SizedBox(height: 4),
+                                  Text(message, style: const TextStyle(fontSize: 13)),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () => _confirmDeleteMessage(docs[index].id),
+                              child: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                            ),
                           ],
                         );
                       },
@@ -2493,4 +2610,4 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-}          
+}                    
