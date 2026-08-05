@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
 import 'dart:ui';
 import 'dart:convert';
+import 'package:flutter/services.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -613,9 +614,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void _quickAdd(double amount) {
     final goal = goals[currentGoalIndex];
     if (goal.targetAmount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Сначала укажите цену мечты!')),
-      );
+      _showSetPriceFirstModal();
       return;
     }
     _updateMoney(amount);
@@ -849,7 +848,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       return nameA.compareTo(nameB);
                     });
                     return ListView.builder(
-                      shrinkWrap: true,
                       itemCount: docs.length,
                       itemBuilder: (context, index) {
                         final data = docs[index].data() as Map<String, dynamic>;
@@ -959,12 +957,62 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 8),
               Text('Поддержать проект', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
               const SizedBox(height: 8),
-              const Text(
-                'Сбербанк: 2202206253667492',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 13, color: Colors.grey),
+              // Тап по номеру карты копирует его в буфер обмена
+              GestureDetector(
+                onTap: () {
+                  Clipboard.setData(const ClipboardData(text: '2202206253667492'));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Номер карты скопирован')),
+                  );
+                },
+                child: const Text(
+                  'Сбербанк: 2202206253667492',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: Colors.grey, decoration: TextDecoration.underline),
+                ),
               ),
               const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // Всплывающее окно "Сначала укажите цену мечты!" — в стиле "Поддержать
+  // проект", но с восклицательным знаком и без строки с картой (окно чуть меньше).
+  void _showSetPriceFirstModal() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.priority_high_rounded, size: 48, color: appState.primaryColor),
+              const SizedBox(height: 12),
+              const Text('Сначала укажите цену мечты!', textAlign: TextAlign.center, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text('Для пополнения баланса', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
+              const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
                 height: 48,
@@ -998,6 +1046,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // isDismissible/enableDrag выключены, выйти можно только через крестик.
   void _showDevCodeModal() {
     final codeController = TextEditingController();
+    bool showWrongCodeError = false;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1008,74 +1057,96 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-            top: 8,
-            left: 24,
-            right: 24,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: IconButton(
-                  icon: const Icon(Icons.close_rounded),
-                  onPressed: () => Navigator.pop(context),
-                ),
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+                top: 8,
+                left: 24,
+                right: 24,
               ),
-              CircleAvatar(
-                radius: 28,
-                backgroundColor: appState.primaryColor.withOpacity(0.15),
-                child: Icon(Icons.lock_outline_rounded, size: 28, color: appState.primaryColor),
-              ),
-              const SizedBox(height: 16),
-              const Text('Режим разработчика', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 6),
-              const Text(
-                'Введите код доступа',
-                style: TextStyle(fontSize: 13, color: Colors.grey),
-              ),
-              const SizedBox(height: 20),
-              TextField(
-                controller: codeController,
-                obscureText: true,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                autofocus: true,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 26, letterSpacing: 10, fontWeight: FontWeight.bold),
-                decoration: InputDecoration(
-                  counterText: '',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: appState.primaryColor,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    // Небольшой сдвиг влево, чтобы крестик был ближе к краю окна
+                    child: Transform.translate(
+                      offset: const Offset(-8, 0),
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ),
                   ),
-                  onPressed: () {
-                    if (codeController.text.trim() == '838995') {
-                      Navigator.pop(context);
-                      _enableDevMode();
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Неверный код')),
-                      );
-                    }
-                  },
-                  child: const Text('Подтвердить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                ),
+                  CircleAvatar(
+                    radius: 28,
+                    backgroundColor: appState.primaryColor.withOpacity(0.15),
+                    child: Icon(Icons.lock_outline_rounded, size: 28, color: appState.primaryColor),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Режим разработчика', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Введите код доступа',
+                    style: TextStyle(fontSize: 13, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: codeController,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    autofocus: true,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 26, letterSpacing: 10, fontWeight: FontWeight.bold),
+                    decoration: InputDecoration(
+                      counterText: '',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    onChanged: (_) {
+                      if (showWrongCodeError) {
+                        setModalState(() => showWrongCodeError = false);
+                      }
+                    },
+                  ),
+                  // Ошибка неверного кода — красным текстом внутри окна,
+                  // не зависит от темы (всегда красный).
+                  if (showWrongCodeError) ...[
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Неверный код!',
+                      style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: appState.primaryColor,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      onPressed: () {
+                        if (codeController.text.trim() == '838995') {
+                          Navigator.pop(context);
+                          _enableDevMode();
+                        } else {
+                          setModalState(() => showWrongCodeError = true);
+                        }
+                      },
+                      child: const Text('Подтвердить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -1316,7 +1387,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       return const Center(child: Text('Сообщений пока нет', style: TextStyle(color: Colors.grey)));
                     }
                     return ListView.separated(
-                      shrinkWrap: true,
                       itemCount: docs.length,
                       separatorBuilder: (context, index) => const Divider(height: 20),
                       itemBuilder: (context, index) {
@@ -1783,9 +1853,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showTransactionBottomSheet(bool isAdding) {
     final goal = goals[currentGoalIndex];
     if (goal.targetAmount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Сначала укажите цену мечты!')),
-      );
+      _showSetPriceFirstModal();
       return;
     }
 
@@ -2360,7 +2428,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Icon(Icons.send_rounded, color: appState.primaryColor, size: 36),
                   const SizedBox(height: 12),
                   const Text(
-                    'Наш телеграм канал',
+                    'Сообщить о багах / идее',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 4),
