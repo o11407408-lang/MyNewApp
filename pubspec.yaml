@@ -19,3 +19,7 @@ dependencies:
 
 flutter:
   uses-material-design: true
+flutter_launcher_icons:
+  image_path: "my_own_app_icon.png"
+  android: true
+  ios: true
