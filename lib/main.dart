@@ -737,11 +737,27 @@ class _HomeScreenState extends State<HomeScreen> {
       goals[index].history = [];
     });
     await _saveGoalData(index);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(wasAchieved ? 'Цель удалена и сохранена в истории желаний' : 'Цель сброшена')),
-      );
-    }
+    _showAppSnackBar(wasAchieved ? 'Цель удалена и сохранена в истории желаний' : 'Цель сброшена');
+  }
+
+  // Единый стиль коротких уведомлений — закруглённые, в цвет темы,
+  // "плавающие" над низом экрана, вместо стандартной чёрной полосы Android.
+  void _showAppSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    final appState = MyApp.of(context)!;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        ),
+        backgroundColor: isError ? Colors.red[400] : appState.primaryColor,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   void _showComingSoonBottomSheet(String title, String description) {
@@ -924,11 +940,7 @@ class _HomeScreenState extends State<HomeScreen> {
               try {
                 await FirebaseFirestore.instance.collection('donations').doc(docId).delete();
               } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Ошибка удаления: $e')),
-                  );
-                }
+                _showAppSnackBar('Ошибка удаления: $e', isError: true);
               }
             },
             child: const Text('Удалить', style: TextStyle(color: Colors.red)),
@@ -957,18 +969,29 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 8),
               Text('Поддержать проект', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
               const SizedBox(height: 8),
-              // Тап по номеру карты копирует его в буфер обмена
-              GestureDetector(
-                onTap: () {
-                  Clipboard.setData(const ClipboardData(text: '2202206253667492'));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Номер карты скопирован')),
-                  );
-                },
-                child: const Text(
-                  'Сбербанк: 2202206253667492',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 13, color: Colors.grey, decoration: TextDecoration.underline),
+              // Номер карты виден как обычный текст, копирование — только
+              // по явной кнопке-иконке (а не по тапу в произвольном месте).
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: appState.primaryColor.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Сбербанк: 2202206253667492',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(width: 10),
+                    GestureDetector(
+                      onTap: () {
+                        Clipboard.setData(const ClipboardData(text: '2202206253667492'));
+                      },
+                      child: Icon(Icons.copy_rounded, size: 18, color: appState.primaryColor),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 20),
@@ -1009,9 +1032,9 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               Icon(Icons.priority_high_rounded, size: 48, color: appState.primaryColor),
               const SizedBox(height: 12),
-              const Text('Сначала укажите цену мечты!', textAlign: TextAlign.center, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const Text('Сначала укажите цену мечты', textAlign: TextAlign.center, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              Text('Для пополнения баланса', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
+              Text('Для пополнения / траты баланса', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
@@ -1073,7 +1096,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     alignment: Alignment.centerLeft,
                     // Небольшой сдвиг влево, чтобы крестик был ближе к краю окна
                     child: Transform.translate(
-                      offset: const Offset(-8, 0),
+                      offset: const Offset(-14, 0),
                       child: IconButton(
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(),
@@ -1158,11 +1181,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('dev_mode_enabled', true);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Режим разработчика активирован!')),
-      );
-    }
+    _showAppSnackBar('Режим разработчика активирован!');
   }
 
   // (3) Выход из режима разработчика (кнопка в настройках)
@@ -1172,11 +1191,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _devModeEnabled = false;
     });
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Режим разработчика выключен')),
-      );
-    }
+    _showAppSnackBar('Режим разработчика выключен');
   }
 
   // Добавление пожертвования в общую базу (Firestore) — видно на всех
@@ -1243,16 +1258,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       });
                       if (context.mounted) {
                         Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Пожертвование добавлено для всех пользователей')),
-                        );
+                        _showAppSnackBar('Пожертвование добавлено для всех пользователей');
                       }
                     } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Ошибка: Firebase не настроен ($e)')),
-                        );
-                      }
+                      _showAppSnackBar('Ошибка: Firebase не настроен ($e)', isError: true);
                     }
                   },
                   child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -1327,16 +1336,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       });
                       if (context.mounted) {
                         Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Сообщение отправлено, спасибо!')),
-                        );
+                        _showAppSnackBar('Сообщение отправлено, спасибо!');
                       }
                     } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Ошибка отправки: $e')),
-                        );
-                      }
+                      _showAppSnackBar('Ошибка отправки: $e', isError: true);
                     }
                   },
                   child: const Text('Отправить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -2405,9 +2408,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     onPressed: _showSupportModal,
                     child: Text(
                       'Отправить донат',
-                      style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
-                    ),
-                  )
+                  const SizedBox(height: 16),
                 ],
               ),
             ),
