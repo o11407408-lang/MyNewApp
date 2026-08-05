@@ -33,6 +33,9 @@ jobs:
 
       - name: Install dependencies
         run: flutter pub get
+      - name: Install launcher icons package
+        run: flutter pub add flutter_launcher_icons
+
       - name: Generate app icon
         run: dart run flutter_launcher_icons:main
       
