@@ -243,11 +243,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
                 child: Column(
                   children: [
-                    _buildFeatureItem(Icons.person_outline, 'Персонализация', 'Указывай имя и фамилию.', appState.primaryColor),
-                    const Divider(height: 16),
-                    _buildFeatureItem(Icons.image_outlined, 'Визуализация мечты', 'Добавляй фото двух целей.', appState.primaryColor),
-                    const Divider(height: 16),
-                    _buildFeatureItem(Icons.palette_outlined, 'Дизайн и темы', 'Выбирай любимый цвет темы.', appState.primaryColor),
+                    _buildFeatureItem(Icons.person_outline, 'Персонализация', 'Указывай имя и фамилию.', _featureColor(appState, isDark)),
+                    const Divider(height: 20),
+                    _buildFeatureItem(Icons.image_outlined, 'Визуализация мечты', 'Добавляй фото двух целей.', _featureColor(appState, isDark)),
+                    const Divider(height: 20),
+                    _buildFeatureItem(Icons.palette_outlined, 'Дизайн и темы', 'Выбирай любимый цвет темы.', _featureColor(appState, isDark)),
                   ],
                 ),
               ),
@@ -346,17 +346,24 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
+  // Пока цвет темы не выбран, иконки функций серые (как иконка-заглушка сверху)
+  Color _featureColor(_MyAppState appState, bool isDark) {
+    if (tempSelectedColorIndex == null) return Colors.grey;
+    return isDark ? appState.darkColors[tempSelectedColorIndex!] : appState.lightColors[tempSelectedColorIndex!];
+  }
+
   Widget _buildFeatureItem(IconData icon, String title, String subtitle, Color color) {
     return Row(
       children: [
-        Icon(icon, color: color, size: 24),
-        const SizedBox(width: 12),
+        Icon(icon, color: color, size: 26),
+        const SizedBox(width: 14),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-              Text(subtitle, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+              Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+              const SizedBox(height: 2),
+              Text(subtitle, style: const TextStyle(fontSize: 13, color: Colors.grey)),
             ],
           ),
         )
@@ -623,8 +630,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void _shareApp() {
     // TODO: замени ссылку на реальную ссылку на google диск с apk
     const shareText =
-        'Привет! Я пользуюсь этим приложением. Присоединяйся!\n'
-        'Я Коплю: мечты\n'
+        'Привет! \n'
+        'Я пользуюсь приложением Я коплю: мечты. \n'
+        'Присоединяйся - оно полностью бесплатное.\n'
         'https://drive.google.com/YOUR_APK_LINK_HERE';
     Share.share(shareText);
   }
@@ -1306,7 +1314,8 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 16),
               TextField(
                 controller: messageController,
-                maxLines: 4,
+                minLines: 1,
+                maxLines: 6,
                 decoration: InputDecoration(
                   labelText: 'Сообщение',
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
@@ -1662,7 +1671,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 ],
-                const SizedBox(height: 12),
+                const SizedBox(height: 20),
+                const Divider(),
+                const SizedBox(height: 8),
                 SizedBox(
                   width: double.infinity,
                   height: 48,
@@ -2482,4 +2493,4 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-}
+}          
