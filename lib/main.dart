@@ -2408,7 +2408,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     onPressed: _showSupportModal,
                     child: Text(
                       'Отправить донат',
-                  const SizedBox(height: 16),
+                      style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
+                    ),
+                  )
                 ],
               ),
             ),
