@@ -1,4 +1,4 @@
-name: my_app
+name: yakopluymarat_krutoi
 description: "A new Flutter project."
 publish_to: 'none'
 version: 1.0.0+1
@@ -23,3 +23,6 @@ flutter_launcher_icons:
   image_path: "my_own_app_icon.png"
   android: true
   ios: false
+
+dev_dependencies:
+  change_app_package_name: ^1.1.0
