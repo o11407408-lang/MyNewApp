@@ -25,6 +25,8 @@ jobs:
 
       - name: Recreate android project files
         run: flutter create . --platforms=android
+      - name: Change package name
+        run: flutter pub run change_app_package_name:main com.yakopluymaratkrutoi.app
       - name: Я Коплю
         run: sed -i 's/android:label="[^"]*"/android:label="Я Коплю"/g' android/app/src/main/AndroidManifest.xml
       - name: Fix compileSdk for all dependencies
