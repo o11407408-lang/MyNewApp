@@ -25,9 +25,6 @@ jobs:
       - name: Add Flutter to PATH
         run: echo "$PWD/_flutter/bin" >> $GITHUB_PATH
 
-      - name: Recreate android project files
-        run: flutter create . --platforms=android
-
       - name: Change package name
         run: flutter pub run change_app_package_name:main com.yakopluymaratkrutoi.app
 
