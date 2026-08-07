@@ -1891,7 +1891,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         width: double.infinity,
                         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                         decoration: BoxDecoration(
-                          color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
+                          color: appState.isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
                           borderRadius: BorderRadius.circular(16),
                         ),
                         child: Row(
