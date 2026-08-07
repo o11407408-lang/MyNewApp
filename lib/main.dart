@@ -2429,7 +2429,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       decoration: BoxDecoration(
                         color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                         borderRadius: BorderRadius.circular(24),
-                        boxShadow: [if (!isDark)
+                        boxShadow: [
+                          if (!isDark)
                             BoxShadow(
                               color: Colors.black.withOpacity(0.04),
                               blurRadius: 10,
@@ -2438,81 +2439,357 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
                       ),
                       child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: GestureDetector(
-                  onTap: _pickImage,
-                  child: goal.imagePath != null
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              // Размытая увеличенная копия фото — заполняет весь блок
-                              Image.file(
-                                File(goal.imagePath!),
-                                fit: BoxFit.cover,
-                              ),
-                              BackdropFilter(
-                                filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                                child: Container(
-                                  color: Colors.black.withOpacity(0.12),
-                                ),
-                              ),
-                              // Чёткое фото поверх, без обрезки
-                              Center(
-                                child: Image.file(
-                                  File(goal.imagePath!),
-                                  fit: BoxFit.contain,
-                                ),
-                              ),
-                            ],
+                        children: [
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: _pickImage,
+                              child: goal.imagePath != null
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(16),
+                                      child: Stack(
+                                        fit: StackFit.expand,
+                                        children: [
+                                          // Размытая увеличенная копия фото — заполняет весь блок
+                                          Image.file(
+                                            File(goal.imagePath!),
+                                            fit: BoxFit.cover,
+                                          ),
+                                          BackdropFilter(
+                                            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                                            child: Container(
+                                              color: Colors.black.withOpacity(0.12),
+                                            ),
+                                          ),
+                                          // Чёткое фото поверх, без обрезки
+                                          Center(
+                                            child: Image.file(
+                                              File(goal.imagePath!),
+                                              fit: BoxFit.contain,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  : Container(
+                                      width: double.infinity,
+                                      decoration: BoxDecoration(
+                                        color: appState.primaryColor.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(16),
+                                      ),
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.add_a_photo_outlined, color: appState.primaryColor, size: 36),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            'Цель ${index + 1}: Нажмите для фото',
+                                            style: TextStyle(color: appState.primaryColor, fontSize: 12, fontWeight: FontWeight.bold),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(
+                            goal.goalTitle,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ${goal.currency}',
+                            style: TextStyle(fontSize: 18, color: appState.primaryColor, fontWeight: FontWeight.bold),
+                          ),
+                          if (goal.dailyAllowance != null && goal.dailyAllowance! > 0) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              'Карманные: ${goal.dailyAllowance!.toInt()} ${goal.currency}/день',
+                              style: const TextStyle(fontSize: 11, color: Colors.grey),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            // Индикатор точек для свайпа целей (включая слайд добавления)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(goals.length + 1, (index) {
+                return Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: currentGoalIndex == index ? 16 : 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: currentGoalIndex == index ? appState.primaryColor : Colors.grey.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                );
+              }),
+            ),
+            const SizedBox(height: 16),
+
+            if (!onAddSlide) ...[
+              Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: SizedBox(
+                      height: 48,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: appState.primaryColor,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () => _showTransactionBottomSheet(true),
+                        icon: const Icon(Icons.add, size: 20),
+                        label: const Text('Пополнить', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 2,
+                    child: SizedBox(
+                      height: 48,
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          side: BorderSide(color: appState.primaryColor, width: 2),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () => _showTransactionBottomSheet(false),
+                        child: Text(
+                          'Потратил',
+                          style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: _showEditGoalModal,
+                    child: CircleAvatar(
+                      radius: 24,
+                      backgroundColor: appState.primaryColor,
+                      child: const Icon(Icons.edit_outlined, color: Colors.white, size: 20),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 12),
+
+              // Кнопки быстрого пополнения
+              Row(
+                children: <int>[100, 500, 1000].map((amount) {
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          side: BorderSide(color: appState.primaryColor.withOpacity(0.5)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                        onPressed: () => _quickAdd(amount.toDouble()),
+                        child: Text(
+                          '+$amount ${goals[currentGoalIndex].currency}',
+                          style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+
+              const SizedBox(height: 24),
+
+              const Text('История операций', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              // AnimatedSize — плавно меняет высоту блока и при увеличении, и
+              // при уменьшении истории (например, после свайп-удаления записи).
+              AnimatedSize(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeInOut,
+                alignment: Alignment.topCenter,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: goals[currentGoalIndex].history.isEmpty
+                      ? const Center(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12.0),
+                            child: Text(
+                              'Операций пока нет',
+                              style: TextStyle(color: Colors.grey, fontSize: 14),
+                            ),
                           ),
                         )
-                      : Container(
-                          width: double.infinity,
-                          decoration: BoxDecoration(
-                            color: appState.primaryColor.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.add_a_photo_outlined, color: appState.primaryColor, size: 36),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Цель ${index + 1}: Нажмите для фото',
-                                style: TextStyle(color: appState.primaryColor, fontSize: 12, fontWeight: FontWeight.bold),
+                      : ListView.separated(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: goals[currentGoalIndex].history.length,
+                          separatorBuilder: (context, index) => const Divider(height: 16),
+                          itemBuilder: (context, index) {
+                            final item = goals[currentGoalIndex].history[index];
+                            final isAdd = item.startsWith('+');
+                            // (4) Свайп влево — удалить запись; общая высота
+                            // блока (AnimatedSize) плавно уменьшится сама.
+                            return Dismissible(
+                              key: ValueKey('hist_${currentGoalIndex}_${index}_$item'),
+                              direction: DismissDirection.endToStart,
+                              onDismissed: (_) => _deleteHistoryEntry(index),
+                              background: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.only(right: 4),
+                                child: const Icon(Icons.delete_outline, color: Colors.red),
                               ),
-                            ],
-                          ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    isAdd ? 'Пополнение' : 'Списание',
+                                    style: const TextStyle(fontWeight: FontWeight.w500),
+                                  ),
+                                  Text(
+                                    item,
+                                    style: TextStyle(
+                                      color: isAdd ? Colors.green : Colors.red,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
                         ),
                 ),
               ),
-              const SizedBox(height: 12),
-              Text(
-                goal.goalTitle,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ${goal.currency}',
-                style: TextStyle(fontSize: 18, color: appState.primaryColor, fontWeight: FontWeight.bold),
-              ),
-              if (goal.dailyAllowance != null && goal.dailyAllowance! > 0) ...[
-                const SizedBox(height: 2),
-                Text(
-                  'Карманные: ${goal.dailyAllowance!.toInt()} ${goal.currency}/день',
-                  style: const TextStyle(fontSize: 11, color: Colors.grey),
-                ),
-              ],
-            ],
-          ),
-        ),
-      );
-    },
-  ),
-);
 
-            
+              const SizedBox(height: 24),
+            ] else ...[
+              Center(
+                child: Text(
+                  'Нажмите «+», чтобы добавить новую цель',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+
+            // Карточка «Поддержать проект»
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.favorite, color: appState.primaryColor, size: 36),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Поддержать проект',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Приложение абсолютно бесплатное и без подписок!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 16),
+                  OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      side: BorderSide(color: isDark ? Colors.white38 : Colors.grey[700]!),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    ),
+                    onPressed: _showSupportModal,
+                    child: Text(
+                      'Отправить донат',
+                      style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
+                    ),
+                  )
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // Карточка «Наш телеграм канал» — теперь кнопка реально отправляет
+            // сообщение разработчику; недоступна на устройстве самого разработчика.
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.send_rounded, color: appState.primaryColor, size: 36),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Сообщить о багах / идее',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Сообщайте о багах, делитесь идеями и следите за обновлениями!',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 16),
+                  OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      side: BorderSide(color: isDark ? Colors.white38 : Colors.grey[700]!),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    ),
+                    onPressed: _devModeEnabled
+                        ? null
+                        : _showMessageDeveloperModal,
+                    child: Text(
+                      _devModeEnabled ? 'Недоступно (вы разработчик)' : 'Сообщить о баге / Идеи',
+                      style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
+                    ),
+                  )
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // Строка с версией приложения в самом низу — 5 тапов открывают пасхалку
+            Center(
+              child: GestureDetector(
+                onTap: _handleVersionTap,
+                behavior: HitTestBehavior.opaque,
+                child: const Text(
+                  'Я Коплю: мечты v.2.3 (beta)',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+}
