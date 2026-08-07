@@ -25,11 +25,11 @@ jobs:
       - name: Add Flutter to PATH
         run: echo "$PWD/_flutter/bin" >> $GITHUB_PATH
 
+      - name: Ensure Android platform exists first
+        run: flutter create . --platforms=android --org com.yakopluymaratkrutoi || true
+
       - name: Install dependencies
         run: flutter pub get
-
-      - name: Ensure Android platform exists
-        run: flutter create . --platforms=android --org com.yakopluymaratkrutoi
 
       - name: Change package name safely
         run: flutter pub run change_app_package_name:main com.yakopluymaratkrutoi.app || true
