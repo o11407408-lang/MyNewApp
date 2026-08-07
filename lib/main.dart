@@ -11,8 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 
 // --- Зашифрованный код разработчика в коде приложения ---
-// Код зашифрован простым базовым шифрованием / обфускацией, чтобы не хранить в открытом виде.
-const String _kEncryptedDevCode = 'MjAyNjAy'; // Зашифрованный пример (например, base64)
+const String _kEncryptedDevCode = 'MjAyNjAy';
 
 bool _verifyLocalDevCode(String input) {
   try {
@@ -20,7 +19,7 @@ bool _verifyLocalDevCode(String input) {
     final decoded = utf8.decode(bytes);
     return input.trim() == decoded;
   } catch (_) {
-    return input.trim() == '202602'; // Запасной вариант
+    return input.trim() == '202602';
   }
 }
 
@@ -259,7 +258,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   void initState() {
     super.initState();
-    // 6. Запрос на разрешение уведомлений при первом входе в приложение
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _requestInitialNotificationPermission();
     });
@@ -270,8 +268,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final requested = prefs.getBool('notif_permission_requested') ?? false;
     if (!requested) {
       await prefs.setBool('notif_permission_requested', true);
-      // Логика запроса системных разрешений может быть здесь,
-      // по ТЗ уведомления не шлются сразу автоматически, а настраиваются ниже.
     }
   }
 
@@ -516,10 +512,10 @@ class GoalData {
   List<String> history;
   String? imagePath;
   double? allowanceAmount;
-  String allowancePeriod; // 'день', 'неделя', 'месяц', 'год'
+  String allowancePeriod;
   String currency;
-  DateTime? targetDate; // 4. Желаемая дата до которой хотелось бы накопить (вплоть до часов и минут)
-  String? lastAutoAddedDate; // Для проверки автоначисления в 00:00
+  DateTime? targetDate;
+  String? lastAutoAddedDate;
 
   GoalData({
     required this.currentAmount,
@@ -569,7 +565,6 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // 3. Автоматическое добавление ровно в 00:00 при указанных карманных деньгах
   void _checkAutomaticAllowance() {
     final now = DateTime.now();
     final todayStr = '${now.year}-${now.month}-${now.day}';
@@ -577,7 +572,7 @@ class _HomeScreenState extends State<HomeScreen> {
     for (int i = 0; i < goals.length; i++) {
       final goal = goals[i];
       if (goal.allowanceAmount != null && goal.allowanceAmount! > 0) {
-        if (goal.lastAutoAddedDate != todayStr && now.hour == 0 && now.minute == 0) {
+        if (goal.lastAutoAddedDate != todayStr) {
           double dailyEquivalent = goal.allowanceAmount!;
           if (goal.allowancePeriod == 'неделя') {
             dailyEquivalent = goal.allowanceAmount! / 7;
@@ -617,6 +612,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final count = prefs.getInt('goals_count') ?? goals.length;
     final devMode = prefs.getBool('dev_mode_enabled') ?? false;
     final wishRaw = prefs.getStringList('wish_history') ?? [];
+    if (!mounted) return;
     setState(() {
       _devModeEnabled = devMode;
       _wishHistory = wishRaw
@@ -663,6 +659,8 @@ class _HomeScreenState extends State<HomeScreen> {
     await prefs.setStringList('history_list_$index', goals[index].history);
     if (goals[index].imagePath != null) {
       await prefs.setString('goal_image_path_$index', goals[index].imagePath!);
+    } else {
+      await prefs.remove('goal_image_path_$index');
     }
     if (goals[index].allowanceAmount != null) {
       await prefs.setDouble('allowance_amount_$index', goals[index].allowanceAmount!);
@@ -763,7 +761,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void _checkGoalReached() {
     final goal = goals[currentGoalIndex];
     if (goal.targetAmount > 0 && goal.currentAmount >= goal.targetAmount) {
-      final appState = MyApp.of(context)!;
+      final appState = MyApp.of(context);
+      if (appState == null) return;
       Navigator.push(
         context,
         createAnimatedRoute(
@@ -876,7 +875,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _showAppSnackBar(String message, {bool isError = false}) {
     if (!mounted) return;
-    final appState = MyApp.of(context)!;
+    final appState = MyApp.of(context);
+    if (appState == null) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -1336,7 +1336,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                       onPressed: () {
-                        // 7. Проверка зашифрованного кода внутри кода приложения (без сервера)
                         final success = _verifyLocalDevCode(codeController.text);
                         if (success) {
                           Navigator.pop(context);
@@ -1693,7 +1692,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // 6. Настройки уведомлений (время, редактируемый текст до 20 символов и галочка "Отправлять каждый день")
   void _showNotificationSettingsModal() async {
     final prefs = await SharedPreferences.getInstance();
     String notifTime = prefs.getString('notif_time') ?? '22:55';
@@ -1702,6 +1700,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final textController = TextEditingController(text: notifText);
 
+    if (!mounted) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1897,7 +1896,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     label: const Text('История желаний', style: TextStyle(fontWeight: FontWeight.bold)),
                   ),
                 ),
-                // 6. Кнопка настроек уведомлений
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
@@ -2144,7 +2142,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    // 1. Возможность добавлять карманные деньги не только в день, но еще и в неделю, месяц, год
                     Row(
                       children: ['день', 'неделя', 'месяц', 'год'].map((period) {
                         final selected = period == selectedPeriod;
@@ -2175,7 +2172,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       }).toList(),
                     ),
                     const SizedBox(height: 16),
-                    // 4. Желаемая дата накопления вплоть до часов и минут (только в настройках)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -2452,7 +2448,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // 2. Расчет остатка времени (лет, дней, часов) с учетом часового пояса телефона
   String _calculateRemainingTimeText(GoalData goal) {
     if (goal.targetAmount <= 0 || goal.currentAmount >= goal.targetAmount) return '';
     if (goal.allowanceAmount == null || goal.allowanceAmount! <= 0) {
@@ -2496,7 +2491,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final days = totalDays % 365;
 
     if (years > 0) {
-      return 'Осталось: $years год $days дней'; // или более точная форма
+      return 'Осталось: $years год $days дней';
     } else {
       return 'Осталось: $totalDays дней';
     }
@@ -2598,10 +2593,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
 
                   final goal = goals[index];
-                  // 5. Изменен порядок интерфейса мечты:
-                  // 1) Карманные деньги (выше цены цели)
-                  // 2) Дата накопления (ниже карманных, но выше цены цели)
-                  // 3) Цена цели
                   final timeText = _calculateRemainingTimeText(goal);
 
                   return Padding(
@@ -2677,7 +2668,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 4),
-                          // 5. Карманные деньги выше цены цели
                           if (goal.allowanceAmount != null && goal.allowanceAmount! > 0) ...[
                             Text(
                               'Карманные: ${goal.allowanceAmount!.toInt()} ${goal.currency} в ${goal.allowancePeriod}',
@@ -2685,7 +2675,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             const SizedBox(height: 2),
                           ],
-                          // 5. Дата накопления ниже карманных, но выше цены цели
                           if (timeText.isNotEmpty) ...[
                             Text(
                               timeText,
@@ -2693,7 +2682,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             const SizedBox(height: 2),
                           ],
-                          // 5. Цена цели ниже даты накопления
                           Text(
                             '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ${goal.currency}',
                             style: TextStyle(fontSize: 18, color: appState.primaryColor, fontWeight: FontWeight.bold),
