@@ -45,7 +45,7 @@ Future<void> _initNotifications() async {
   const iosSettings = DarwinInitializationSettings();
   const initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
   try {
-    await _notificationsPlugin.initialize(initSettings);
+    await _notificationsPlugin.initialize(settings: initSettings);
   } catch (e) {
     // ignore: avoid_print
     print('Не удалось инициализировать уведомления: $e');
@@ -82,7 +82,7 @@ Future<void> _scheduleReminderNotification({
   required bool daily,
 }) async {
   try {
-    await _notificationsPlugin.cancel(_reminderNotificationId);
+    await _notificationsPlugin.cancel(id: _reminderNotificationId);
     final now = tz.TZDateTime.now(tz.local);
     var scheduled = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
     if (scheduled.isBefore(now)) {
@@ -99,11 +99,11 @@ Future<void> _scheduleReminderNotification({
     const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
 
     await _notificationsPlugin.zonedSchedule(
-      _reminderNotificationId,
-      'Я Коплю: мечты',
-      text,
-      scheduled,
-      details,
+      id: _reminderNotificationId,
+      title: 'Я Коплю: мечты',
+      body: text,
+      scheduledDate: scheduled,
+      notificationDetails: details,
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
       matchDateTimeComponents: daily ? DateTimeComponents.time : null,
     );
