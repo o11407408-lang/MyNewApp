@@ -34,7 +34,7 @@ const int _reminderNotificationId = 1001;
 Future<void> _initNotifications() async {
   tz_data.initializeTimeZones();
   try {
-    final String currentTimeZone = (await FlutterTimezone.getLocalTimezone()).identifier;
+    final String currentTimeZone = await FlutterTimezone.getLocalTimezone();
     tz.setLocalLocation(tz.getLocation(currentTimeZone));
   } catch (e) {
     // ignore: avoid_print
@@ -45,7 +45,7 @@ Future<void> _initNotifications() async {
   const iosSettings = DarwinInitializationSettings();
   const initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
   try {
-    await _notificationsPlugin.initialize(settings: initSettings);
+    await _notificationsPlugin.initialize(initSettings);
   } catch (e) {
     // ignore: avoid_print
     print('Не удалось инициализировать уведомления: $e');
@@ -58,8 +58,25 @@ Future<void> _requestNotificationPermission() async {
     final androidImpl = _notificationsPlugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     if (androidImpl != null) {
-      await androidImpl.requestNotificationsPermission();
-      await androidImpl.requestExactAlarmsPermission();
+      // Запросы разрешений разделены на отдельные try/catch и идут не
+      // "впритык" друг за другом: если экран обычных уведомлений и экран
+      // точных будильников открываются одновременно/слишком быстро, кнопка
+      // разрешения на экране будильников иногда отрисовывается серой
+      // (недоступной для нажатия). Небольшая пауза даёт первому диалогу
+      // полностью закрыться, прежде чем откроется следующий.
+      try {
+        await androidImpl.requestNotificationsPermission();
+      } catch (e) {
+        // ignore: avoid_print
+        print('Не удалось запросить разрешение на уведомления: $e');
+      }
+      await Future.delayed(const Duration(milliseconds: 400));
+      try {
+        await androidImpl.requestExactAlarmsPermission();
+      } catch (e) {
+        // ignore: avoid_print
+        print('Не удалось запросить разрешение на точные будильники: $e');
+      }
     }
     final iosImpl = _notificationsPlugin.resolvePlatformSpecificImplementation<
         IOSFlutterLocalNotificationsPlugin>();
@@ -82,7 +99,7 @@ Future<void> _scheduleReminderNotification({
   required bool daily,
 }) async {
   try {
-    await _notificationsPlugin.cancel(id: _reminderNotificationId);
+    await _notificationsPlugin.cancel(_reminderNotificationId);
     final now = tz.TZDateTime.now(tz.local);
     var scheduled = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
     if (scheduled.isBefore(now)) {
@@ -98,15 +115,36 @@ Future<void> _scheduleReminderNotification({
     const iosDetails = DarwinNotificationDetails();
     const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
 
-    await _notificationsPlugin.zonedSchedule(
-      id: _reminderNotificationId,
-      title: 'Я Коплю: мечты',
-      body: text,
-      scheduledDate: scheduled,
-      notificationDetails: details,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      matchDateTimeComponents: daily ? DateTimeComponents.time : null,
-    );
+    // Баг: если разрешение на точные будильники не выдано (например,
+    // пользователь его не подтвердил), exactAllowWhileIdle выбрасывает
+    // исключение и раньше оно просто "проглатывалось" в catch ниже —
+    // уведомление молча не планировалось, хотя пользователь видел
+    // сообщение "Напоминание сохранено". Теперь при ошибке точного
+    // планирования пробуем неточный режим, чтобы уведомление всё равно
+    // пришло (возможно, с небольшим отклонением по времени).
+    try {
+      await _notificationsPlugin.zonedSchedule(
+        _reminderNotificationId,
+        'Я Коплю: мечты',
+        text,
+        scheduled,
+        details,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        matchDateTimeComponents: daily ? DateTimeComponents.time : null,
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print('Точное планирование не удалось, пробуем неточное: $e');
+      await _notificationsPlugin.zonedSchedule(
+        _reminderNotificationId,
+        'Я Коплю: мечты',
+        text,
+        scheduled,
+        details,
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        matchDateTimeComponents: daily ? DateTimeComponents.time : null,
+      );
+    }
   } catch (e) {
     // ignore: avoid_print
     print('Не удалось запланировать напоминание: $e');
@@ -167,6 +205,54 @@ Future<void> _trackAppInstall() async {
   }
 }
 
+// Порог неактивности в днях: если пользователь месяц не заходил в
+// приложение, устройство считается "отписавшимся" для статистики.
+const int _inactivityThresholdDays = 30;
+
+// Учитывает неактивность пользователя в статистике разработчика: если с
+// последнего входа прошёл месяц (и дольше), устройство сначала списывается
+// из счётчика скачиваний (минус 1), как будто оно "отписалось". Дальше, раз
+// приложение всё же открыли (и есть интернет), оно тут же снова
+// засчитывается как новое устройство через _trackAppInstall() — при этом
+// локальные данные пользователя (цели, история и т.д.) никак не трогаются
+// и не сбрасываются.
+Future<void> _handleInactivityAndInstallTracking() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final lastOpenMs = prefs.getInt('last_open_ms');
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    if (lastOpenMs != null) {
+      final daysSinceLastOpen = (now - lastOpenMs) / (1000 * 60 * 60 * 24);
+      if (daysSinceLastOpen >= _inactivityThresholdDays) {
+        final deviceId = await _getDeviceId();
+        if (deviceId != null && deviceId.isNotEmpty) {
+          final firestore = FirebaseFirestore.instance;
+          final installDocRef = firestore.collection('installs').doc(deviceId);
+          final statsDocRef = firestore.collection('app_stats').doc('downloads');
+          await firestore.runTransaction((transaction) async {
+            final installSnap = await transaction.get(installDocRef);
+            if (!installSnap.exists) return;
+            final statsSnap = await transaction.get(statsDocRef);
+            final currentCount = (statsSnap.data()?['count'] as num?)?.toInt() ?? 0;
+            transaction.delete(installDocRef);
+            transaction.set(statsDocRef, {'count': currentCount > 0 ? currentCount - 1 : 0});
+          });
+        }
+      }
+    }
+
+    await prefs.setInt('last_open_ms', now);
+    // Устройство либо новое, либо было только что списано выше из-за
+    // неактивности — в обоих случаях документ installs/{deviceId} не
+    // существует, поэтому это снова засчитается как новое скачивание.
+    await _trackAppInstall();
+  } catch (e) {
+    // ignore: avoid_print
+    print('Отслеживание неактивности не удалось: $e');
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _initNotifications();
@@ -187,8 +273,9 @@ void main() async {
     // ignore: avoid_print
     print('Firebase init failed (ещё не настроен?): $e');
   }
-  // Не блокирует запуск: считает уникальные устройства в фоне.
-  _trackAppInstall();
+  // Не блокирует запуск: считает уникальные устройства в фоне и учитывает
+  // месяц неактивности (см. _handleInactivityAndInstallTracking).
+  _handleInactivityAndInstallTracking();
 
   final prefs = await SharedPreferences.getInstance();
   final isRegistered = prefs.getBool('is_registered') ?? false;
@@ -1582,12 +1669,57 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  // Задержка ввода кода разработчика при переборе: с 5-й неверной попытки
+  // блокировка на 5 минут, а каждая следующая неверная попытка добавляет
+  // ещё 5 минут к длительности блокировки. Счётчик и время окончания
+  // блокировки хранятся в SharedPreferences, поэтому переживают перезапуск
+  // приложения.
+  Future<Duration?> _devCodeLockoutRemaining() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lockoutUntilMs = prefs.getInt('dev_code_lockout_until_ms') ?? 0;
+    final remainingMs = lockoutUntilMs - DateTime.now().millisecondsSinceEpoch;
+    if (remainingMs <= 0) return null;
+    return Duration(milliseconds: remainingMs);
+  }
+
+  Future<Duration?> _registerWrongDevCodeAttempt() async {
+    final prefs = await SharedPreferences.getInstance();
+    final failCount = (prefs.getInt('dev_code_fail_count') ?? 0) + 1;
+    await prefs.setInt('dev_code_fail_count', failCount);
+    if (failCount >= 5) {
+      final lockoutMinutes = (failCount - 4) * 5;
+      final lockoutUntil = DateTime.now().add(Duration(minutes: lockoutMinutes));
+      await prefs.setInt('dev_code_lockout_until_ms', lockoutUntil.millisecondsSinceEpoch);
+      return Duration(minutes: lockoutMinutes);
+    }
+    return null;
+  }
+
+  Future<void> _resetDevCodeAttempts() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('dev_code_fail_count');
+    await prefs.remove('dev_code_lockout_until_ms');
+  }
+
+  String _formatLockoutDuration(Duration d) {
+    final totalMinutes = (d.inSeconds / 60).ceil();
+    return '$totalMinutes ${pluralizeRu(totalMinutes, 'минуту', 'минуты', 'минут')}';
+  }
+
   // (10) Модалка ввода кода теперь не закрывается случайно от лишнего тапа:
   // isDismissible/enableDrag выключены, выйти можно только через крестик.
-  void _showDevCodeModal() {
+  void _showDevCodeModal() async {
     final codeController = TextEditingController();
     bool showWrongCodeError = false;
     String? errorMessage;
+    // Если устройство уже заблокировано с прошлого раза — сразу показываем
+    // оставшееся время, не дожидаясь новой неверной попытки.
+    final existingLockout = await _devCodeLockoutRemaining();
+    if (existingLockout != null) {
+      showWrongCodeError = true;
+      errorMessage = 'Слишком много попыток. Попробуйте через ${_formatLockoutDuration(existingLockout)}';
+    }
+    if (!mounted) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1679,14 +1811,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
-                      onPressed: () {
-                        if (codeController.text.trim() == _decodedDevCode()) {
-                          Navigator.pop(context);
-                          _enableDevMode();
-                        } else {
+                      onPressed: () async {
+                        // Проверяем блокировку заново на случай, если она
+                        // наступила уже после открытия окна.
+                        final lockout = await _devCodeLockoutRemaining();
+                        if (lockout != null) {
                           setModalState(() {
                             showWrongCodeError = true;
-                            errorMessage = 'Неверный код!';
+                            errorMessage = 'Слишком много попыток. Попробуйте через ${_formatLockoutDuration(lockout)}';
+                          });
+                          return;
+                        }
+                        if (codeController.text.trim() == _decodedDevCode()) {
+                          await _resetDevCodeAttempts();
+                          if (context.mounted) Navigator.pop(context);
+                          _enableDevMode();
+                        } else {
+                          final newLockout = await _registerWrongDevCodeAttempt();
+                          setModalState(() {
+                            showWrongCodeError = true;
+                            errorMessage = newLockout != null
+                                ? 'Слишком много попыток. Попробуйте через ${_formatLockoutDuration(newLockout)}'
+                                : 'Неверный код!';
                           });
                         }
                       },
@@ -2069,11 +2215,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 left: 24,
                 right: 24,
               ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+              // (5) Окно настроек в режиме разработчика получает дополнительные
+              // блоки (скачивания, донаты, сообщения, выход), из-за чего без
+              // ограничения высоты лист растягивался почти на весь экран.
+              // Ограничиваем максимальную высоту, чтобы окно оставалось
+              // компактным как обычно, а всё, что не поместилось, было
+              // доступно прокруткой внутри (SingleChildScrollView ниже).
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.75,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                     const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 16),
                     SwitchListTile(
@@ -2379,13 +2535,103 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         label: const Text('Сбросить все настройки', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             );
           },
         );
       },
+    );
+  }
+
+  // (6) Модалка «Информация о цели» — открывается по кнопке-информации в
+  // правом нижнем углу карточки цели.
+  void _showGoalInfoModal(GoalData goal) {
+    final estimate = estimateRemainingToGoal(goal);
+    final remaining = goal.targetAmount - goal.currentAmount;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+            top: 24,
+            left: 24,
+            right: 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.info_outline_rounded, color: appState.primaryColor, size: 24),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text('Информация о цели', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _goalInfoRow('Название', goal.goalTitle),
+              _goalInfoRow('Накоплено', '${goal.currentAmount.toInt()} ${goal.currency}'),
+              _goalInfoRow('Цель', '${goal.targetAmount.toInt()} ${goal.currency}'),
+              _goalInfoRow('Осталось накопить', '${remaining > 0 ? remaining.toInt() : 0} ${goal.currency}'),
+              if (goal.dailyAllowance != null && goal.dailyAllowance! > 0)
+                _goalInfoRow(
+                  'Карманные',
+                  '${goal.dailyAllowance!.toInt()} ${goal.currency} ${allowancePeriodLabel(goal.allowancePeriod)}',
+                ),
+              if (estimate != null) _goalInfoRow('Осталось копить', estimate),
+              if (goal.targetDate != null)
+                _goalInfoRow(
+                  'Желаемая дата',
+                  '${goal.targetDate!.day.toString().padLeft(2, '0')}.${goal.targetDate!.month.toString().padLeft(2, '0')}.${goal.targetDate!.year}',
+                ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _goalInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 13, color: Colors.grey)),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -2919,7 +3165,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   final goal = goals[index];
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                    child: Container(
+                    // (6) Кнопка «Информация о цели» — в правом нижнем углу
+                    // карточки, поверх остального содержимого, цвет иконки
+                    // берётся из текущей темы (appState.primaryColor).
+                    child: Stack(
+                      children: [
+                        Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -3022,6 +3273,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           ),
                         ],
                       ),
+                        ),
+                        Positioned(
+                          right: 10,
+                          bottom: 10,
+                          child: GestureDetector(
+                            onTap: () => _showGoalInfoModal(goal),
+                            child: Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: (isDark ? const Color(0xFF1E1E1E) : Colors.white).withOpacity(0.9),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: appState.primaryColor, width: 1.5),
+                              ),
+                              child: Icon(Icons.info_outline_rounded, size: 18, color: appState.primaryColor),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   );
                 },
@@ -3228,9 +3497,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       side: BorderSide(color: isDark ? Colors.white38 : Colors.grey[700]!),
                       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                     ),
-                    onPressed: _showSupportModal,
+                    onPressed: _devModeEnabled ? null : _showSupportModal,
                     child: Text(
-                      'Отправить донат',
+                      _devModeEnabled ? 'Недоступно (вы разработчик)' : 'Отправить донат',
                       style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
                     ),
                   )
