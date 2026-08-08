@@ -34,7 +34,7 @@ const int _reminderNotificationId = 1001;
 Future<void> _initNotifications() async {
   tz_data.initializeTimeZones();
   try {
-    final String currentTimeZone = await FlutterTimezone.getLocalTimezone();
+    final String currentTimeZone = (await FlutterTimezone.getLocalTimezone()).identifier;
     tz.setLocalLocation(tz.getLocation(currentTimeZone));
   } catch (e) {
     // ignore: avoid_print
