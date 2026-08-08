@@ -18,45 +18,31 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Install Flutter manually
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Recreate android project files
+        run: flutter create . --platforms=android
+      - name: Change package name
+        run: flutter pub run change_app_package_name:main com.yakopluymaratkrutoi.app
+      - name: Я Коплю
+        run: sed -i 's/android:label="[^"]*"/android:label="Я Коплю"/g' android/app/src/main/AndroidManifest.xml
+      - name: Fix compileSdk for all dependencies
         run: |
-          git clone https://github.com/flutter/flutter.git --depth 1 -b stable _flutter
-
-      - name: Add Flutter to PATH
-        run: echo "$PWD/_flutter/bin" >> $GITHUB_PATH
-
-      - name: Ensure Android platform exists first
-        run: flutter create . --platforms=android --org com.yakopluymaratkrutoi || true
+          echo "subprojects { afterEvaluate { project -> if (project.hasProperty('android')) { project.android { compileSdkVersion 36 } } } }" >> android/build.gradle
 
       - name: Install dependencies
         run: flutter pub get
-
-      - name: Change package name safely
-        run: flutter pub run change_app_package_name:main com.yakopluymaratkrutoi.app || true
-
-      - name: Я Коплю
-        run: |
-          if [ -f android/app/src/main/AndroidManifest.xml ]; then
-            sed -i 's/android:label="[^"]*"/android:label="Я Коплю"/g' android/app/src/main/AndroidManifest.xml
-          fi
-
-      - name: Fix compileSdk for all dependencies
-        run: |
-          if [ -f android/build.gradle ]; then
-            echo "subprojects { afterEvaluate { project -> if (project.hasProperty('android')) { project.android { compileSdkVersion 36 } } } }" >> android/build.gradle
-          fi
-
       - name: Install launcher icons package
-        run: flutter pub add flutter_launcher_icons || true
+        run: flutter pub add flutter_launcher_icons
 
       - name: Generate app icon
-        run: dart run flutter_launcher_icons:main || true
+        run: dart run flutter_launcher_icons:main
 
       - name: Make gradlew executable
-        run: |
-          if [ -f android/gradlew ]; then
-            chmod +x android/gradlew
-          fi
+        run: chmod +x android/gradlew
 
       - name: Build APK via Gradle
         run: |
