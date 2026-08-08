@@ -7,23 +7,116 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
 import 'dart:ui';
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest_all.dart' as tz_data;
+import 'package:flutter_timezone/flutter_timezone.dart';
 
-// --- Зашифрованный код разработчика в коде приложения ---
-const String _kEncryptedDevCode = 'MjAyNjAy';
+// Код доступа к режиму разработчика больше НЕ отправляется на сервер и
+// не хранится открытым текстом — он побайтово обфусцирован (XOR)
+// прямо в коде приложения. Это не защита военного уровня (при желании
+// обфускацию можно снять реверс-инжинирингом APK), но простой текстовый
+// поиск ("838995") по декомпилированному коду больше ничего не найдёт.
+const List<int> _obfuscatedDevCode = [23, 28, 23, 22, 22, 26];
+const int _devCodeXorKey = 47;
 
-bool _verifyLocalDevCode(String input) {
+String _decodedDevCode() {
+  return String.fromCharCodes(_obfuscatedDevCode.map((b) => b ^ _devCodeXorKey));
+}
+
+// --- Локальные напоминания (flutter_local_notifications) ---
+final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
+const int _reminderNotificationId = 1001;
+
+Future<void> _initNotifications() async {
+  tz_data.initializeTimeZones();
   try {
-    final bytes = base64Decode(_kEncryptedDevCode);
-    final decoded = utf8.decode(bytes);
-    return input.trim() == decoded;
-  } catch (_) {
-    return input.trim() == '202602';
+    final String currentTimeZone = await FlutterTimezone.getLocalTimezone();
+    tz.setLocalLocation(tz.getLocation(currentTimeZone));
+  } catch (e) {
+    // ignore: avoid_print
+    print('Не удалось определить часовой пояс, используется UTC: $e');
+  }
+
+  const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+  const iosSettings = DarwinInitializationSettings();
+  const initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+  try {
+    await _notificationsPlugin.initialize(initSettings);
+  } catch (e) {
+    // ignore: avoid_print
+    print('Не удалось инициализировать уведомления: $e');
+  }
+}
+
+// Запрашивает разрешение на уведомления у пользователя (Android 13+ и iOS).
+Future<void> _requestNotificationPermission() async {
+  try {
+    final androidImpl = _notificationsPlugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (androidImpl != null) {
+      await androidImpl.requestNotificationsPermission();
+      await androidImpl.requestExactAlarmsPermission();
+    }
+    final iosImpl = _notificationsPlugin.resolvePlatformSpecificImplementation<
+        IOSFlutterLocalNotificationsPlugin>();
+    if (iosImpl != null) {
+      await iosImpl.requestPermissions(alert: true, badge: true, sound: true);
+    }
+  } catch (e) {
+    // ignore: avoid_print
+    print('Не удалось запросить разрешение на уведомления: $e');
+  }
+}
+
+// Планирует напоминание на заданное локальное время. Если daily=true —
+// повторяется каждый день в это же время; если false — сработает один
+// раз на ближайшее наступление этого времени и не повторится.
+Future<void> _scheduleReminderNotification({
+  required int hour,
+  required int minute,
+  required String text,
+  required bool daily,
+}) async {
+  try {
+    await _notificationsPlugin.cancel(_reminderNotificationId);
+    final now = tz.TZDateTime.now(tz.local);
+    var scheduled = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+    if (scheduled.isBefore(now)) {
+      scheduled = scheduled.add(const Duration(days: 1));
+    }
+    const androidDetails = AndroidNotificationDetails(
+      'daily_reminder_channel',
+      'Напоминания',
+      channelDescription: 'Ежедневные напоминания пополнить копилку',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    const iosDetails = DarwinNotificationDetails();
+    const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
+
+    await _notificationsPlugin.zonedSchedule(
+      _reminderNotificationId,
+      'Я Коплю: мечты',
+      text,
+      scheduled,
+      details,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      matchDateTimeComponents: daily ? DateTimeComponents.time : null,
+    );
+  } catch (e) {
+    // ignore: avoid_print
+    print('Не удалось запланировать напоминание: $e');
   }
 }
 
 // --- Счётчик уникальных установок приложения (через Firestore) ---
+// Идентификатор устройства (Android ID / iOS identifierForVendor)
+// используется как ключ документа, поэтому повторная установка на то
+// же самое устройство (после удаления) не увеличивает счётчик снова.
 Future<String?> _getDeviceId() async {
   try {
     final deviceInfoPlugin = DeviceInfoPlugin();
@@ -55,6 +148,8 @@ Future<void> _trackAppInstall() async {
     await firestore.runTransaction((transaction) async {
       final installSnap = await transaction.get(installDocRef);
       if (installSnap.exists) {
+        // Это устройство уже учтено ранее (даже если приложение удаляли
+        // и ставили заново) — повторно не считаем.
         return;
       }
       final statsSnap = await transaction.get(statsDocRef);
@@ -74,6 +169,10 @@ Future<void> _trackAppInstall() async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _initNotifications();
+  // Firebase нужен для режима разработчика (пожертвования видны на всех
+  // устройствах). Если проект ещё не настроен через `flutterfire configure`,
+  // оборачиваем в try/catch, чтобы остальное приложение работало без сбоев.
   try {
     await Firebase.initializeApp(
       options: const FirebaseOptions(
@@ -86,8 +185,9 @@ void main() async {
     );
   } catch (e) {
     // ignore: avoid_print
-    print('Firebase init failed: $e');
+    print('Firebase init failed (ещё не настроен?): $e');
   }
+  // Не блокирует запуск: считает уникальные устройства в фоне.
   _trackAppInstall();
 
   final prefs = await SharedPreferences.getInstance();
@@ -96,6 +196,16 @@ void main() async {
   final savedLastName = prefs.getString('user_last_name') ?? '';
   final isDark = prefs.getBool('is_dark') ?? false;
   final colorIndex = prefs.getInt('color_index') ?? 0;
+
+  // Если пользователь уже настраивал напоминание раньше — восстанавливаем
+  // его расписание при каждом холодном запуске приложения.
+  final reminderHour = prefs.getInt('reminder_hour');
+  final reminderMinute = prefs.getInt('reminder_minute');
+  final reminderText = prefs.getString('reminder_text');
+  final reminderDaily = prefs.getBool('reminder_daily') ?? true;
+  if (reminderHour != null && reminderMinute != null && reminderText != null && reminderText.isNotEmpty) {
+    _scheduleReminderNotification(hour: reminderHour, minute: reminderMinute, text: reminderText, daily: reminderDaily);
+  }
 
   runApp(MyApp(
     isRegistered: isRegistered,
@@ -136,6 +246,8 @@ class _MyAppState extends State<MyApp> {
   late String userLastName;
   late bool isRegistered;
 
+  // Убран один из двух одинаковых по смыслу голубых/синих оттенков —
+  // осталось 5 цветов вместо 6.
   final List<Color> lightColors = [
     Colors.red,
     Colors.orange,
@@ -193,6 +305,10 @@ class _MyAppState extends State<MyApp> {
       userLastName = lastName;
       isRegistered = true;
     });
+    // (1) Запрашиваем разрешение на уведомления сразу при первом входе.
+    // Сами уведомления при этом ещё НЕ начнут приходить — время и текст
+    // нужно будет задать в настройках.
+    _requestNotificationPermission();
   }
 
   void resetAllData() async {
@@ -254,22 +370,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final _nameController = TextEditingController();
   final _lastNameController = TextEditingController();
   int? tempSelectedColorIndex;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _requestInitialNotificationPermission();
-    });
-  }
-
-  void _requestInitialNotificationPermission() async {
-    final prefs = await SharedPreferences.getInstance();
-    final requested = prefs.getBool('notif_permission_requested') ?? false;
-    if (!requested) {
-      await prefs.setBool('notif_permission_requested', true);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -422,6 +522,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
+  // Пока цвет темы не выбран, иконки функций серые (как иконка-заглушка сверху)
   Color _featureColor(_MyAppState appState, bool isDark) {
     if (tempSelectedColorIndex == null) return Colors.grey;
     return isDark ? appState.darkColors[tempSelectedColorIndex!] : appState.lightColors[tempSelectedColorIndex!];
@@ -511,11 +612,15 @@ class GoalData {
   String goalTitle;
   List<String> history;
   String? imagePath;
-  double? allowanceAmount;
+  double? dailyAllowance;
+  // Период, за который начисляется сумма из dailyAllowance:
+  // 'day' | 'week' | 'month' | 'year'. По умолчанию 'day' — как было раньше.
   String allowancePeriod;
   String currency;
+  // Желаемая дата/время, до которого хочется накопить (вплоть до часов и
+  // минут). Видна и редактируется только в настройках цели, на карточке
+  // не отображается.
   DateTime? targetDate;
-  String? lastAutoAddedDate;
 
   GoalData({
     required this.currentAmount,
@@ -523,12 +628,129 @@ class GoalData {
     required this.goalTitle,
     required this.history,
     this.imagePath,
-    this.allowanceAmount,
-    this.allowancePeriod = 'день',
+    this.dailyAllowance,
+    this.allowancePeriod = 'day',
     this.currency = '₽',
     this.targetDate,
-    this.lastAutoAddedDate,
   });
+}
+
+// Подпись периода начисления карманных денег для интерфейса.
+String allowancePeriodLabel(String period) {
+  switch (period) {
+    case 'week':
+      return 'в неделю';
+    case 'month':
+      return 'в месяц';
+    case 'year':
+      return 'в год';
+    case 'day':
+    default:
+      return 'в день';
+  }
+}
+
+// Короткое название периода для чипов выбора в форме редактирования цели.
+String allowancePeriodShortLabel(String period) {
+  switch (period) {
+    case 'week':
+      return 'Неделя';
+    case 'month':
+      return 'Месяц';
+    case 'year':
+      return 'Год';
+    case 'day':
+    default:
+      return 'День';
+  }
+}
+
+// Прибавляет один период (день/неделю/месяц/год) к дате, аккуратно
+// обрабатывая переполнение дня месяца (например, 31 января + месяц).
+DateTime addAllowancePeriod(DateTime date, String period) {
+  switch (period) {
+    case 'week':
+      return date.add(const Duration(days: 7));
+    case 'month':
+      final totalMonth = date.month + 1;
+      final year = date.year + (totalMonth - 1) ~/ 12;
+      final month = ((totalMonth - 1) % 12) + 1;
+      final daysInNewMonth = DateUtils.getDaysInMonth(year, month);
+      final day = date.day > daysInNewMonth ? daysInNewMonth : date.day;
+      return DateTime(year, month, day, date.hour, date.minute, date.second);
+    case 'year':
+      final year = date.year + 1;
+      final daysInNewMonth = DateUtils.getDaysInMonth(year, date.month);
+      final day = date.day > daysInNewMonth ? daysInNewMonth : date.day;
+      return DateTime(year, date.month, day, date.hour, date.minute, date.second);
+    case 'day':
+    default:
+      return date.add(const Duration(days: 1));
+  }
+}
+
+// Русские окончания в зависимости от числа (1 год / 2 года / 5 лет и т.д.)
+String pluralizeRu(int n, String one, String few, String many) {
+  final mod10 = n % 10;
+  final mod100 = n % 100;
+  if (mod10 == 1 && mod100 != 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  return many;
+}
+
+// Форматирует разницу между `from` и `to` в человекочитаемый вид:
+// "1 год 1 день", "3 месяца", "5 дней" — а если до цели остаётся меньше
+// суток, то в часах/минутах (с учётом текущего времени и часового пояса
+// устройства, т.к. используется DateTime.now(), который всегда локальный).
+String formatRemainingDuration(DateTime from, DateTime to) {
+  final diff = to.difference(from);
+  if (diff.inHours < 24) {
+    if (diff.inMinutes < 60) {
+      final minutes = diff.inMinutes <= 0 ? 1 : diff.inMinutes;
+      return 'через $minutes ${pluralizeRu(minutes, 'минуту', 'минуты', 'минут')}';
+    }
+    final hours = diff.inMinutes / 60.0;
+    final roundedHours = hours.ceil();
+    return 'через $roundedHours ${pluralizeRu(roundedHours, 'час', 'часа', 'часов')}';
+  }
+
+  int years = to.year - from.year;
+  int months = to.month - from.month;
+  int days = to.day - from.day;
+  if (days < 0) {
+    months -= 1;
+    final prevMonthLastDay = DateTime(to.year, to.month, 0).day;
+    days += prevMonthLastDay;
+  }
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+
+  final parts = <String>[];
+  if (years > 0) parts.add('$years ${pluralizeRu(years, 'год', 'года', 'лет')}');
+  if (months > 0) parts.add('$months ${pluralizeRu(months, 'месяц', 'месяца', 'месяцев')}');
+  if (days > 0 || parts.isEmpty) parts.add('$days ${pluralizeRu(days, 'день', 'дня', 'дней')}');
+
+  return 'через ${parts.join(' ')}';
+}
+
+// Оценка того, сколько ещё осталось копить при текущих карманных деньгах.
+// Возвращает null, если карманные не заданы, сумма 0/некорректна или цель
+// уже достигнута — тогда строка на карточке просто не показывается.
+String? estimateRemainingToGoal(GoalData goal) {
+  final amount = goal.dailyAllowance;
+  if (amount == null || amount <= 0) return null;
+  final remaining = goal.targetAmount - goal.currentAmount;
+  if (remaining <= 0) return null;
+
+  final periodsNeeded = (remaining / amount).ceil();
+  final now = DateTime.now();
+  DateTime target = now;
+  for (int i = 0; i < periodsNeeded; i++) {
+    target = addAllowancePeriod(target, goal.allowancePeriod);
+  }
+  return formatRemainingDuration(now, target);
 }
 
 class HomeScreen extends StatefulWidget {
@@ -541,13 +763,14 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int currentGoalIndex = 0;
   final PageController _pageController = PageController();
 
   int _nameTapCount = 0;
   bool _devModeEnabled = false;
 
+  // История достигнутых/удалённых целей ("История желаний" в настройках)
   List<Map<String, dynamic>> _wishHistory = [];
 
   List<GoalData> goals = [
@@ -557,40 +780,87 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final ImagePicker _picker = ImagePicker();
 
+  // (1) Таймер для автоначисления карманных денег "в день" ровно в 00:00
+  // (по локальному времени/часовому поясу устройства).
+  Timer? _midnightAllowanceTimer;
+
   @override
   void initState() {
     super.initState();
-    _loadAllGoals().then((_) {
-      _checkAutomaticAllowance();
-    });
+    WidgetsBinding.instance.addObserver(this);
+    _initHomeScreenData();
   }
 
-  void _checkAutomaticAllowance() {
-    final now = DateTime.now();
-    final todayStr = '${now.year}-${now.month}-${now.day}';
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _midnightAllowanceTimer?.cancel();
+    super.dispose();
+  }
 
-    for (int i = 0; i < goals.length; i++) {
-      final goal = goals[i];
-      if (goal.allowanceAmount != null && goal.allowanceAmount! > 0) {
-        if (goal.lastAutoAddedDate != todayStr) {
-          double dailyEquivalent = goal.allowanceAmount!;
-          if (goal.allowancePeriod == 'неделя') {
-            dailyEquivalent = goal.allowanceAmount! / 7;
-          } else if (goal.allowancePeriod == 'месяц') {
-            dailyEquivalent = goal.allowanceAmount! / 30;
-          } else if (goal.allowancePeriod == 'год') {
-            dailyEquivalent = goal.allowanceAmount! / 365;
-          }
-
-          goal.currentAmount += dailyEquivalent;
-          goal.lastAutoAddedDate = todayStr;
-          goal.history.insert(0, '+ ${dailyEquivalent.toStringAsFixed(0)} ${goal.currency} (авто)');
-          _saveGoalData(i);
-        }
-      }
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // (1) Если приложение просто было свёрнуто (не закрыто) и полночь
+    // прошла в фоне — досчитываем при возврате, а не только при
+    // холодном запуске.
+    if (state == AppLifecycleState.resumed) {
+      _creditDueDailyAllowance();
+      _scheduleMidnightAllowanceTimer();
     }
   }
 
+  Future<void> _initHomeScreenData() async {
+    await _loadAllGoals();
+    // Досчитываем пропущенные полуночи (если приложение было закрыто) и
+    // дальше держим таймер до следующей полуночи, пока приложение открыто.
+    await _creditDueDailyAllowance();
+    _scheduleMidnightAllowanceTimer();
+  }
+
+  void _scheduleMidnightAllowanceTimer() {
+    _midnightAllowanceTimer?.cancel();
+    final now = DateTime.now();
+    final nextMidnight = DateTime(now.year, now.month, now.day + 1);
+    _midnightAllowanceTimer = Timer(nextMidnight.difference(now), () async {
+      await _creditDueDailyAllowance();
+      if (mounted) _scheduleMidnightAllowanceTimer();
+    });
+  }
+
+  // (1) Начисляет карманные "в день" за все прошедшие с последнего
+  // начисления полуночи — если приложение было закрыто несколько дней,
+  // досчитывает всё сразу, а не теряет пропущенные дни.
+  Future<void> _creditDueDailyAllowance() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateUtils.dateOnly(DateTime.now());
+    bool changed = false;
+    for (int i = 0; i < goals.length; i++) {
+      final goal = goals[i];
+      if (goal.dailyAllowance == null || goal.dailyAllowance! <= 0 || goal.allowancePeriod != 'day') {
+        continue;
+      }
+      final lastStr = prefs.getString('last_allowance_credit_$i');
+      if (lastStr == null) {
+        // Точки отсчёта ещё нет (например, старые данные без этого поля) —
+        // фиксируем сегодняшний день и не начисляем задним числом.
+        await prefs.setString('last_allowance_credit_$i', today.toIso8601String());
+        continue;
+      }
+      final lastDate = DateUtils.dateOnly(DateTime.tryParse(lastStr) ?? today);
+      final daysPassed = today.difference(lastDate).inDays;
+      if (daysPassed > 0) {
+        goal.currentAmount += goal.dailyAllowance! * daysPassed;
+        await prefs.setDouble('current_amount_$i', goal.currentAmount);
+        await prefs.setString('last_allowance_credit_$i', today.toIso8601String());
+        changed = true;
+      }
+    }
+    if (changed && mounted) {
+      setState(() {});
+    }
+  }
+
+  // Автоназвания для новых целей, которые пользователь добавляет через "+"
   String _ordinalGoalName(int number) {
     const names = {
       1: 'Первая мечта',
@@ -612,7 +882,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final count = prefs.getInt('goals_count') ?? goals.length;
     final devMode = prefs.getBool('dev_mode_enabled') ?? false;
     final wishRaw = prefs.getStringList('wish_history') ?? [];
-    if (!mounted) return;
     setState(() {
       _devModeEnabled = devMode;
       _wishHistory = wishRaw
@@ -639,14 +908,11 @@ class _HomeScreenState extends State<HomeScreen> {
         goals[i].goalTitle = prefs.getString('goal_title_$i') ?? _ordinalGoalName(i + 1);
         goals[i].history = prefs.getStringList('history_list_$i') ?? [];
         goals[i].imagePath = prefs.getString('goal_image_path_$i');
-        goals[i].allowanceAmount = prefs.containsKey('allowance_amount_$i') ? prefs.getDouble('allowance_amount_$i') : null;
-        goals[i].allowancePeriod = prefs.getString('allowance_period_$i') ?? 'день';
+        goals[i].dailyAllowance = prefs.containsKey('daily_allowance_$i') ? prefs.getDouble('daily_allowance_$i') : null;
+        goals[i].allowancePeriod = prefs.getString('allowance_period_$i') ?? 'day';
         goals[i].currency = prefs.getString('goal_currency_$i') ?? '₽';
-        final targetDateIso = prefs.getString('target_date_$i');
-        if (targetDateIso != null) {
-          goals[i].targetDate = DateTime.tryParse(targetDateIso);
-        }
-        goals[i].lastAutoAddedDate = prefs.getString('last_auto_added_$i');
+        final targetDateStr = prefs.getString('target_date_$i');
+        goals[i].targetDate = targetDateStr != null ? DateTime.tryParse(targetDateStr) : null;
       }
     });
   }
@@ -659,26 +925,33 @@ class _HomeScreenState extends State<HomeScreen> {
     await prefs.setStringList('history_list_$index', goals[index].history);
     if (goals[index].imagePath != null) {
       await prefs.setString('goal_image_path_$index', goals[index].imagePath!);
-    } else {
-      await prefs.remove('goal_image_path_$index');
     }
-    if (goals[index].allowanceAmount != null) {
-      await prefs.setDouble('allowance_amount_$index', goals[index].allowanceAmount!);
+    if (goals[index].dailyAllowance != null) {
+      await prefs.setDouble('daily_allowance_$index', goals[index].dailyAllowance!);
+      await prefs.setString('allowance_period_$index', goals[index].allowancePeriod);
+      // (1) Если карманные заданы именно "в день" — обеспечиваем точку
+      // отсчёта для автоначисления в полночь, не начисляя задним числом.
+      if (goals[index].allowancePeriod == 'day') {
+        if (!prefs.containsKey('last_allowance_credit_$index')) {
+          await prefs.setString('last_allowance_credit_$index', DateUtils.dateOnly(DateTime.now()).toIso8601String());
+        }
+      } else {
+        await prefs.remove('last_allowance_credit_$index');
+      }
     } else {
-      await prefs.remove('allowance_amount_$index');
+      await prefs.remove('daily_allowance_$index');
+      await prefs.remove('allowance_period_$index');
+      await prefs.remove('last_allowance_credit_$index');
     }
-    await prefs.setString('allowance_period_$index', goals[index].allowancePeriod);
     await prefs.setString('goal_currency_$index', goals[index].currency);
     if (goals[index].targetDate != null) {
       await prefs.setString('target_date_$index', goals[index].targetDate!.toIso8601String());
     } else {
       await prefs.remove('target_date_$index');
     }
-    if (goals[index].lastAutoAddedDate != null) {
-      await prefs.setString('last_auto_added_$index', goals[index].lastAutoAddedDate!);
-    }
   }
 
+  // (7) Сохраняем список "История желаний"
   Future<void> _saveWishHistory() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = _wishHistory.map((e) => jsonEncode(e)).toList();
@@ -733,6 +1006,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _checkGoalReached();
   }
 
+  // (4) Удаление одной записи операции из истории — AnimatedSize, которым
+  // уже обёрнут блок истории, сам плавно анимирует уменьшение высоты.
   Future<void> _deleteHistoryEntry(int index) async {
     setState(() {
       goals[currentGoalIndex].history.removeAt(index);
@@ -750,6 +1025,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _shareApp() {
+    // TODO: замени ссылку на реальную ссылку на google диск с apk
     const shareText =
         'Привет! \n'
         'Я пользуюсь приложением Я коплю: мечты. \n'
@@ -761,8 +1037,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void _checkGoalReached() {
     final goal = goals[currentGoalIndex];
     if (goal.targetAmount > 0 && goal.currentAmount >= goal.targetAmount) {
-      final appState = MyApp.of(context);
-      if (appState == null) return;
+      final appState = MyApp.of(context)!;
       Navigator.push(
         context,
         createAnimatedRoute(
@@ -806,6 +1081,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ],
                     ),
                   ),
+                  // (2) Кнопка "назад" в левом верхнем углу
                   Positioned(
                     top: 4,
                     left: 4,
@@ -826,22 +1102,23 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _updateGoal(String newTitle, double newTarget, {double? allowanceAmount, String? allowancePeriod, String? currency, DateTime? targetDate}) async {
+  Future<void> _updateGoal(String newTitle, double newTarget, {double? dailyAllowance, String allowancePeriod = 'day', String? currency, DateTime? targetDate}) async {
     setState(() {
       goals[currentGoalIndex].goalTitle = newTitle;
       goals[currentGoalIndex].targetAmount = newTarget;
-      goals[currentGoalIndex].allowanceAmount = allowanceAmount;
-      if (allowancePeriod != null) {
-        goals[currentGoalIndex].allowancePeriod = allowancePeriod;
-      }
+      goals[currentGoalIndex].dailyAllowance = dailyAllowance;
+      goals[currentGoalIndex].allowancePeriod = allowancePeriod;
+      goals[currentGoalIndex].targetDate = targetDate;
       if (currency != null) {
         goals[currentGoalIndex].currency = currency;
       }
-      goals[currentGoalIndex].targetDate = targetDate;
     });
     _saveGoalData(currentGoalIndex);
   }
 
+  // (5)+(6) Удаление цели: если она была достигнута — сохраняем её в
+  // "Историю желаний", саму цель не удаляем из списка, а сбрасываем к
+  // стандартным значениям (название, фото, сумма, карманные).
   Future<void> _deleteGoal(int index) async {
     final goal = goals[index];
     final wasAchieved = goal.targetAmount > 0 && goal.currentAmount >= goal.targetAmount;
@@ -856,27 +1133,30 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('goal_image_path_$index');
-    await prefs.remove('allowance_amount_$index');
+    await prefs.remove('daily_allowance_$index');
+    await prefs.remove('allowance_period_$index');
+    await prefs.remove('last_allowance_credit_$index');
     await prefs.remove('target_date_$index');
     setState(() {
       goals[index].goalTitle = _ordinalGoalName(index + 1);
       goals[index].targetAmount = 0;
       goals[index].currentAmount = 0;
       goals[index].imagePath = null;
-      goals[index].allowanceAmount = null;
-      goals[index].allowancePeriod = 'день';
-      goals[index].currency = '₽';
+      goals[index].dailyAllowance = null;
+      goals[index].allowancePeriod = 'day';
       goals[index].targetDate = null;
+      goals[index].currency = '₽';
       goals[index].history = [];
     });
     await _saveGoalData(index);
     _showAppSnackBar(wasAchieved ? 'Цель удалена и сохранена в истории желаний' : 'Цель сброшена');
   }
 
+  // Единый стиль коротких уведомлений — закруглённые, в цвет темы,
+  // "плавающие" над низом экрана, вместо стандартной чёрной полосы Android.
   void _showAppSnackBar(String message, {bool isError = false}) {
     if (!mounted) return;
-    final appState = MyApp.of(context);
-    if (appState == null) return;
+    final appState = MyApp.of(context)!;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -892,6 +1172,53 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _showComingSoonBottomSheet(String title, String description) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (context) {
+        final appState = MyApp.of(context)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.hourglass_top_rounded, size: 48, color: appState.primaryColor),
+              const SizedBox(height: 12),
+              const Text('Скоро появится', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
+              const SizedBox(height: 8),
+              Text(
+                description,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appState.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // (1)+(7) Таблица лидеров: сортировка по убыванию суммы (при равенстве —
+  // по имени А-Я) и удаление доната доступно только в режиме разработчика.
   void _showLeaderboardModal() {
     showModalBottomSheet(
       context: context,
@@ -937,6 +1264,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: Text('Пока нет пожертвований', style: TextStyle(color: Colors.grey)),
                       );
                     }
+                    // Сортировка: сумма по убыванию, при равенстве — имя А-Я
                     docs.sort((a, b) {
                       final da = a.data() as Map<String, dynamic>;
                       final db = b.data() as Map<String, dynamic>;
@@ -1005,6 +1333,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // (1) Подтверждение удаления доната (доступно только в режиме разработчика)
   void _confirmDeleteDonation(String docId) {
     showModalBottomSheet(
       context: context,
@@ -1071,6 +1400,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // (1b) Подтверждение удаления сообщения от пользователя (только в dev-режиме)
   void _confirmDeleteMessage(String docId) {
     showModalBottomSheet(
       context: context,
@@ -1156,6 +1486,8 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 8),
               Text('Поддержать проект', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
               const SizedBox(height: 8),
+              // Номер карты виден как обычный текст, копирование — только
+              // по явной кнопке-иконке (а не по тапу в произвольном месте).
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
@@ -1200,6 +1532,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // Всплывающее окно "Сначала укажите цену мечты!" — в стиле "Поддержать
+  // проект", но с восклицательным знаком и без строки с картой (окно чуть меньше).
   void _showSetPriceFirstModal() {
     showModalBottomSheet(
       context: context,
@@ -1239,6 +1573,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // Пасхалка: 10 тапов по имени в шапке открывают ввод кода разработчика
   void _handleNameTap() {
     _nameTapCount++;
     if (_nameTapCount >= 10) {
@@ -1247,9 +1582,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // (10) Модалка ввода кода теперь не закрывается случайно от лишнего тапа:
+  // isDismissible/enableDrag выключены, выйти можно только через крестик.
   void _showDevCodeModal() {
     final codeController = TextEditingController();
     bool showWrongCodeError = false;
+    String? errorMessage;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1274,6 +1612,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   Align(
                     alignment: Alignment.centerLeft,
+                    // Небольшой сдвиг влево, чтобы крестик был ближе к краю окна
                     child: Transform.translate(
                       offset: const Offset(-14, 0),
                       child: IconButton(
@@ -1313,16 +1652,21 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (showWrongCodeError) {
                         setModalState(() {
                           showWrongCodeError = false;
+                          errorMessage = null;
                         });
                       }
                     },
                   ),
+                  // Ошибка/блокировка — красным текстом внутри окна,
+                  // не зависит от темы (всегда красный). Сообщение
+                  // приходит с сервера (неверный код / кол-во оставшихся
+                  // попыток / временная блокировка при переборе).
                   if (showWrongCodeError) ...[
                     const SizedBox(height: 10),
-                    const Text(
-                      'Неверный код!',
+                    Text(
+                      errorMessage ?? 'Неверный код!',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 13),
+                      style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                   ],
                   const SizedBox(height: 20),
@@ -1336,13 +1680,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                       onPressed: () {
-                        final success = _verifyLocalDevCode(codeController.text);
-                        if (success) {
+                        if (codeController.text.trim() == _decodedDevCode()) {
                           Navigator.pop(context);
                           _enableDevMode();
                         } else {
                           setModalState(() {
                             showWrongCodeError = true;
+                            errorMessage = 'Неверный код!';
                           });
                         }
                       },
@@ -1367,6 +1711,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _showAppSnackBar('Режим разработчика активирован!');
   }
 
+  // (3) Выход из режима разработчика (кнопка в настройках)
   Future<void> _disableDevMode() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('dev_mode_enabled', false);
@@ -1376,6 +1721,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _showAppSnackBar('Режим разработчика выключен');
   }
 
+  // Добавление пожертвования в общую базу (Firestore) — видно на всех
+  // устройствах, а не только локально.
   void _showAddDonationModal() {
     final donorNameController = TextEditingController();
     final donorAmountController = TextEditingController();
@@ -1454,6 +1801,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // (9) Сообщение разработчику: недоступно, если сам режим разработчика
+  // включён на этом устройстве.
   void _showMessageDeveloperModal() {
     final messageController = TextEditingController();
     showModalBottomSheet(
@@ -1531,6 +1880,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // (9) Для разработчика: история всех сообщений от пользователей
   void _showDeveloperMessagesModal() {
     showModalBottomSheet(
       context: context,
@@ -1620,6 +1970,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // (6) "История желаний" — достигнутые и позже удалённые цели
   void _showWishHistoryModal() {
     showModalBottomSheet(
       context: context,
@@ -1692,14 +2043,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showNotificationSettingsModal() async {
+  Future<void> _showSettingsModal() async {
     final prefs = await SharedPreferences.getInstance();
-    String notifTime = prefs.getString('notif_time') ?? '22:55';
-    String notifText = prefs.getString('notif_text') ?? 'Не забудь пополнить!';
-    bool sendEveryDay = prefs.getBool('notif_every_day') ?? true;
-
-    final textController = TextEditingController(text: notifText);
-
+    int selectedReminderHour = prefs.getInt('reminder_hour') ?? 22;
+    int selectedReminderMinute = prefs.getInt('reminder_minute') ?? 55;
+    bool reminderDaily = prefs.getBool('reminder_daily') ?? true;
+    final reminderTextController = TextEditingController(
+      text: prefs.getString('reminder_text') ?? 'Пополни копилку!',
+    );
     if (!mounted) return;
     showModalBottomSheet(
       context: context,
@@ -1723,64 +2074,143 @@ class _HomeScreenState extends State<HomeScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Настройка напоминаний', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                    const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 16),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Тёмная тема'),
+                      value: appState.isDark,
+                      onChanged: (val) {
+                        appState.toggleTheme(val);
+                        Navigator.pop(context);
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    const Text('Выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: List.generate(
+                        appState.lightColors.length,
+                        (index) => GestureDetector(
+                          onTap: () {
+                            appState.setColor(index);
+                            Navigator.pop(context);
+                          },
+                          child: CircleAvatar(
+                            radius: 18,
+                            backgroundColor: appState.isDark ? appState.darkColors[index] : appState.lightColors[index],
+                            child: appState.selectedColorIndex == index
+                                ? const Icon(Icons.check, color: Colors.white, size: 18)
+                                : null,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: appState.primaryColor,
+                          side: BorderSide(color: appState.primaryColor),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: _shareApp,
+                        icon: const Icon(Icons.share_outlined),
+                        label: const Text('Поделиться приложением', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                    // (6) История желаний — доступна всем пользователям
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: appState.primaryColor,
+                          side: BorderSide(color: appState.primaryColor),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _showWishHistoryModal();
+                        },
+                        icon: const Icon(Icons.auto_awesome_outlined),
+                        label: const Text('История желаний', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                    // Напоминания: время, текст (до 20 символов) и галочка
+                    // "каждый день". Само разрешение уже было запрошено при
+                    // первом входе — здесь только настраивается расписание.
+                    const SizedBox(height: 20),
+                    const Divider(),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(Icons.notifications_outlined, size: 16, color: appState.primaryColor),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Напоминания',
+                          style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    GestureDetector(
+                      onTap: () async {
+                        final picked = await showTimePicker(
+                          context: context,
+                          initialTime: TimeOfDay(hour: selectedReminderHour, minute: selectedReminderMinute),
+                        );
+                        if (picked != null) {
+                          setModalState(() {
+                            selectedReminderHour = picked.hour;
+                            selectedReminderMinute = picked.minute;
+                          });
+                        }
+                      },
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: appState.primaryColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.access_time_rounded, size: 18, color: appState.primaryColor),
+                            const SizedBox(width: 10),
+                            Text(
+                              'Время напоминания: ${selectedReminderHour.toString().padLeft(2, '0')}:${selectedReminderMinute.toString().padLeft(2, '0')}',
+                              style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                     TextField(
-                      controller: textController,
+                      controller: reminderTextController,
                       maxLength: 20,
                       decoration: InputDecoration(
                         labelText: 'Текст уведомления',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                       ),
-                      onChanged: (val) {
-                        if (val.length > 20) {
-                          textController.text = val.substring(0, 20);
-                          textController.selection = TextSelection.fromPosition(
-                            TextPosition(offset: textController.text.length),
-                          );
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('Время напоминания:', style: TextStyle(fontSize: 15)),
-                        TextButton(
-                          onPressed: () async {
-                            final parts = notifTime.split(':');
-                            final initialTime = TimeOfDay(
-                              hour: int.parse(parts[0]),
-                              minute: int.parse(parts[1]),
-                            );
-                            final picked = await showTimePicker(
-                              context: context,
-                              initialTime: initialTime,
-                            );
-                            if (picked != null) {
-                              setModalState(() {
-                                notifTime = '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
-                              });
-                            }
-                          },
-                          child: Text(notifTime, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: appState.primaryColor)),
-                        ),
-                      ],
                     ),
                     CheckboxListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('Отправлять каждый день'),
-                      value: sendEveryDay,
-                      onChanged: (val) {
-                        setModalState(() {
-                          sendEveryDay = val ?? true;
-                        });
-                      },
+                      controlAffinity: ListTileControlAffinity.leading,
+                      title: const Text('Отправлять каждый день', style: TextStyle(fontSize: 13)),
+                      value: reminderDaily,
+                      activeColor: appState.primaryColor,
+                      onChanged: (val) => setModalState(() => reminderDaily = val ?? true),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 8),
                     SizedBox(
                       width: double.infinity,
-                      height: 52,
+                      height: 48,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: appState.primaryColor,
@@ -1788,15 +2218,165 @@ class _HomeScreenState extends State<HomeScreen> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                         ),
                         onPressed: () async {
-                          await prefs.setString('notif_time', notifTime);
-                          await prefs.setString('notif_text', textController.text.trim());
-                          await prefs.setBool('notif_every_day', sendEveryDay);
+                          final text = reminderTextController.text.trim();
+                          if (text.isEmpty) {
+                            _showAppSnackBar('Введите текст уведомления', isError: true);
+                            return;
+                          }
+                          final p = await SharedPreferences.getInstance();
+                          await p.setInt('reminder_hour', selectedReminderHour);
+                          await p.setInt('reminder_minute', selectedReminderMinute);
+                          await p.setString('reminder_text', text);
+                          await p.setBool('reminder_daily', reminderDaily);
+                          await _requestNotificationPermission();
+                          await _scheduleReminderNotification(
+                            hour: selectedReminderHour,
+                            minute: selectedReminderMinute,
+                            text: text,
+                            daily: reminderDaily,
+                          );
                           if (context.mounted) {
                             Navigator.pop(context);
-                            _showAppSnackBar('Настройки уведомлений сохранены');
+                            _showAppSnackBar('Напоминание сохранено');
                           }
                         },
-                        child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        child: const Text('Сохранить напоминание', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                    if (_devModeEnabled) ...[
+                      const SizedBox(height: 20),
+                      const Divider(),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(Icons.verified_user_rounded, size: 16, color: appState.primaryColor),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Режим разработчика',
+                            style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      // (10) Счётчик уникальных скачиваний приложения — считает
+                      // устройства (Firestore), повторная установка на то же
+                      // устройство счётчик не увеличивает.
+                      StreamBuilder<DocumentSnapshot>(
+                        stream: FirebaseFirestore.instance
+                            .collection('app_stats')
+                            .doc('downloads')
+                            .snapshots(),
+                        builder: (context, snapshot) {
+                          final data = snapshot.data?.data() as Map<String, dynamic>?;
+                          final count = (data?['count'] as num?)?.toInt();
+                          final displayValue = snapshot.connectionState == ConnectionState.waiting
+                              ? '…'
+                              : (count?.toString() ?? '—');
+                          return Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                            decoration: BoxDecoration(
+                              color: appState.isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(Icons.download_rounded, size: 18, color: appState.primaryColor),
+                                    const SizedBox(width: 8),
+                                    const Text('Скачиваний приложения', style: TextStyle(fontSize: 13)),
+                                  ],
+                                ),
+                                Text(
+                                  displayValue,
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: appState.primaryColor),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: appState.primaryColor,
+                            side: BorderSide(color: appState.primaryColor),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          ),
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _showAddDonationModal();
+                          },
+                          icon: const Icon(Icons.volunteer_activism_outlined),
+                          label: const Text('Добавить пожертвование', style: TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                      // (9) История сообщений от пользователей — только в dev-режиме
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: appState.primaryColor,
+                            side: BorderSide(color: appState.primaryColor),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          ),
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _showDeveloperMessagesModal();
+                          },
+                          icon: const Icon(Icons.mail_outline_rounded),
+                          label: const Text('Сообщения от пользователей', style: TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                      // (3) Выход из режима разработчика
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.orange,
+                            side: const BorderSide(color: Colors.orange),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          ),
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _disableDevMode();
+                          },
+                          icon: const Icon(Icons.logout_rounded),
+                          label: const Text('Выйти из режима разработчика', style: TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    const Divider(),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red,
+                          side: const BorderSide(color: Colors.red),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () {
+                          Navigator.pop(context);
+                          appState.resetAllData();
+                          Navigator.pushReplacement(
+                            context,
+                            MaterialPageRoute(builder: (context) => const OnboardingScreen()),
+                          );
+                        },
+                        icon: const Icon(Icons.delete_forever_outlined),
+                        label: const Text('Сбросить все настройки', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ],
@@ -1809,259 +2389,15 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showSettingsModal() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      builder: (context) {
-        final appState = MyApp.of(context)!;
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom + 24,
-            top: 24,
-            left: 24,
-            right: 24,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 16),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Тёмная тема'),
-                  value: appState.isDark,
-                  onChanged: (val) {
-                    appState.toggleTheme(val);
-                    Navigator.pop(context);
-                  },
-                ),
-                const SizedBox(height: 20),
-                const Text('Выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: List.generate(
-                    appState.lightColors.length,
-                    (index) => GestureDetector(
-                      onTap: () {
-                        appState.setColor(index);
-                        Navigator.pop(context);
-                      },
-                      child: CircleAvatar(
-                        radius: 18,
-                        backgroundColor: appState.isDark ? appState.darkColors[index] : appState.lightColors[index],
-                        child: appState.selectedColorIndex == index
-                            ? const Icon(Icons.check, color: Colors.white, size: 18)
-                            : null,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: appState.primaryColor,
-                      side: BorderSide(color: appState.primaryColor),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    ),
-                    onPressed: _shareApp,
-                    icon: const Icon(Icons.share_outlined),
-                    label: const Text('Поделиться приложением', style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: appState.primaryColor,
-                      side: BorderSide(color: appState.primaryColor),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    ),
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _showWishHistoryModal();
-                    },
-                    icon: const Icon(Icons.auto_awesome_outlined),
-                    label: const Text('История желаний', style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: appState.primaryColor,
-                      side: BorderSide(color: appState.primaryColor),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    ),
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _showNotificationSettingsModal();
-                    },
-                    icon: const Icon(Icons.notifications_outlined),
-                    label: const Text('Настройка уведомлений', style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ),
-                if (_devModeEnabled) ...[
-                  const SizedBox(height: 20),
-                  const Divider(),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(Icons.verified_user_rounded, size: 16, color: appState.primaryColor),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Режим разработчика',
-                        style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  StreamBuilder<DocumentSnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('app_stats')
-                        .doc('downloads')
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      final data = snapshot.data?.data() as Map<String, dynamic>?;
-                      final count = (data?['count'] as num?)?.toInt();
-                      final displayValue = snapshot.connectionState == ConnectionState.waiting
-                          ? '…'
-                          : (count?.toString() ?? '—');
-                      return Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                        decoration: BoxDecoration(
-                          color: appState.isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(Icons.download_rounded, size: 18, color: appState.primaryColor),
-                                const SizedBox(width: 8),
-                                const Text('Скачиваний приложения', style: TextStyle(fontSize: 13)),
-                              ],
-                            ),
-                            Text(
-                              displayValue,
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: appState.primaryColor),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: appState.primaryColor,
-                        side: BorderSide(color: appState.primaryColor),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _showAddDonationModal();
-                      },
-                      icon: const Icon(Icons.volunteer_activism_outlined),
-                      label: const Text('Добавить пожертвование', style: TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: appState.primaryColor,
-                        side: BorderSide(color: appState.primaryColor),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _showDeveloperMessagesModal();
-                      },
-                      icon: const Icon(Icons.mail_outline_rounded),
-                      label: const Text('Сообщения от пользователей', style: TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.orange,
-                        side: const BorderSide(color: Colors.orange),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        _disableDevMode();
-                      },
-                      icon: const Icon(Icons.logout_rounded),
-                      label: const Text('Выйти из режима разработчика', style: TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 20),
-                const Divider(),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red,
-                      side: const BorderSide(color: Colors.red),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                    ),
-                    onPressed: () {
-                      Navigator.pop(context);
-                      appState.resetAllData();
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(builder: (context) => const OnboardingScreen()),
-                      );
-                    },
-                    icon: const Icon(Icons.delete_forever_outlined),
-                    label: const Text('Сбросить все настройки', style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   void _showEditGoalModal() {
     final goal = goals[currentGoalIndex];
     final titleController = TextEditingController(text: goal.goalTitle);
     final targetController = TextEditingController(text: goal.targetAmount.toStringAsFixed(0));
     final allowanceController = TextEditingController(
-      text: goal.allowanceAmount != null ? goal.allowanceAmount!.toStringAsFixed(0) : '',
+      text: goal.dailyAllowance != null ? goal.dailyAllowance!.toStringAsFixed(0) : '',
     );
-    String selectedPeriod = goal.allowancePeriod;
     String selectedCurrency = goal.currency;
+    String selectedAllowancePeriod = goal.allowancePeriod;
     DateTime? selectedTargetDate = goal.targetDate;
 
     showModalBottomSheet(
@@ -2137,33 +2473,34 @@ class _HomeScreenState extends State<HomeScreen> {
                       controller: allowanceController,
                       keyboardType: TextInputType.number,
                       decoration: InputDecoration(
-                        labelText: 'Карманные деньги (необязательно)',
+                        labelText: 'Карманные (необязательно)',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                     ),
+                    // (1) Период, за который приходят карманные деньги —
+                    // день/неделя/месяц/год. По умолчанию "День", как и было.
+                    const SizedBox(height: 12),
+                    const Text('Как часто приходят карманные', style: TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w400)),
                     const SizedBox(height: 8),
                     Row(
-                      children: ['день', 'неделя', 'месяц', 'год'].map((period) {
-                        final selected = period == selectedPeriod;
-                        return Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 2),
-                            child: GestureDetector(
-                              onTap: () => setModalState(() => selectedPeriod = period),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(vertical: 8),
-                                alignment: Alignment.center,
-                                decoration: BoxDecoration(
-                                  color: selected ? appState.primaryColor : appState.primaryColor.withOpacity(0.1),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Text(
-                                  period,
-                                  style: TextStyle(
-                                    color: selected ? Colors.white : appState.primaryColor,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
+                      children: ['day', 'week', 'month', 'year'].map((period) {
+                        final selected = period == selectedAllowancePeriod;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: GestureDetector(
+                            onTap: () => setModalState(() => selectedAllowancePeriod = period),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: selected ? appState.primaryColor : appState.primaryColor.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Text(
+                                allowancePeriodShortLabel(period),
+                                style: TextStyle(
+                                  color: selected ? Colors.white : appState.primaryColor,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
                                 ),
                               ),
                             ),
@@ -2171,44 +2508,73 @@ class _HomeScreenState extends State<HomeScreen> {
                         );
                       }).toList(),
                     ),
+                    // (2) Желаемая дата/время, до которого хочется накопить.
+                    // Видна и редактируется только здесь, в настройках цели.
                     const SizedBox(height: 16),
+                    const Text('Желаемая дата накопления (необязательно)', style: TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w400)),
+                    const SizedBox(height: 8),
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          selectedTargetDate == null
-                              ? 'Желаемая дата: не задана'
-                              : 'До: ${selectedTargetDate!.day}.${selectedTargetDate!.month}.${selectedTargetDate!.year} ${selectedTargetDate!.hour.toString().padLeft(2, '0')}:${selectedTargetDate!.minute.toString().padLeft(2, '0')}',
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                        TextButton(
-                          onPressed: () async {
-                            final datePicked = await showDatePicker(
-                              context: context,
-                              initialDate: selectedTargetDate ?? DateTime.now().add(const Duration(days: 30)),
-                              firstDate: DateTime.now(),
-                              lastDate: DateTime(2100),
-                            );
-                            if (datePicked != null && context.mounted) {
-                              final timePicked = await showTimePicker(
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () async {
+                              final pickedDate = await showDatePicker(
                                 context: context,
-                                initialTime: TimeOfDay.fromDateTime(selectedTargetDate ?? DateTime.now()),
+                                initialDate: selectedTargetDate ?? DateTime.now().add(const Duration(days: 30)),
+                                firstDate: DateTime.now(),
+                                lastDate: DateTime(DateTime.now().year + 50),
                               );
-                              if (timePicked != null) {
-                                setModalState(() {
-                                  selectedTargetDate = DateTime(
-                                    datePicked.year,
-                                    datePicked.month,
-                                    datePicked.day,
-                                    timePicked.hour,
-                                    timePicked.minute,
-                                  );
-                                });
-                              }
-                            }
-                          },
-                          child: const Text('Изменить дату'),
+                              if (pickedDate == null) return;
+                              if (!context.mounted) return;
+                              final pickedTime = await showTimePicker(
+                                context: context,
+                                initialTime: selectedTargetDate != null
+                                    ? TimeOfDay.fromDateTime(selectedTargetDate!)
+                                    : const TimeOfDay(hour: 12, minute: 0),
+                              );
+                              if (pickedTime == null) return;
+                              setModalState(() {
+                                selectedTargetDate = DateTime(
+                                  pickedDate.year,
+                                  pickedDate.month,
+                                  pickedDate.day,
+                                  pickedTime.hour,
+                                  pickedTime.minute,
+                                );
+                              });
+                            },
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                              decoration: BoxDecoration(
+                                color: appState.primaryColor.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.event_outlined, size: 18, color: appState.primaryColor),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      selectedTargetDate != null
+                                          ? '${selectedTargetDate!.day.toString().padLeft(2, '0')}.${selectedTargetDate!.month.toString().padLeft(2, '0')}.${selectedTargetDate!.year} в ${selectedTargetDate!.hour.toString().padLeft(2, '0')}:${selectedTargetDate!.minute.toString().padLeft(2, '0')}'
+                                          : 'Не выбрана',
+                                      style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
+                        if (selectedTargetDate != null) ...[
+                          const SizedBox(width: 8),
+                          IconButton(
+                            onPressed: () => setModalState(() => selectedTargetDate = null),
+                            icon: const Icon(Icons.close_rounded),
+                            color: Colors.grey,
+                          ),
+                        ],
                       ],
                     ),
                     const SizedBox(height: 20),
@@ -2230,8 +2596,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             _updateGoal(
                               newTitle,
                               newTarget,
-                              allowanceAmount: newAllowance,
-                              allowancePeriod: selectedPeriod,
+                              dailyAllowance: newAllowance,
+                              allowancePeriod: selectedAllowancePeriod,
                               currency: selectedCurrency,
                               targetDate: selectedTargetDate,
                             );
@@ -2241,6 +2607,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                       ),
                     ),
+                    // (5) Удаление цели — сбрасывает название/сумму/фото,
+                    // саму цель (её слот) не удаляет полностью.
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
@@ -2419,6 +2787,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             side: BorderSide(color: appState.primaryColor, width: 2),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                           ),
+                          // Специально ничего не делает при нажатии — кнопка
+                          // "для вида", а не для реального выбора.
                           onPressed: () {},
                           child: Text(
                             'Нет',
@@ -2429,6 +2799,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                   ),
                 ),
+                // (2) Кнопка "назад" в левом верхнем углу
                 Positioned(
                   top: 4,
                   left: 4,
@@ -2446,55 +2817,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
-  }
-
-  String _calculateRemainingTimeText(GoalData goal) {
-    if (goal.targetAmount <= 0 || goal.currentAmount >= goal.targetAmount) return '';
-    if (goal.allowanceAmount == null || goal.allowanceAmount! <= 0) {
-      if (goal.targetDate != null) {
-        final diff = goal.targetDate!.difference(DateTime.now());
-        if (diff.isNegative) return 'Время вышло';
-        if (diff.inDays > 0) {
-          final years = diff.inDays ~/ 365;
-          final days = diff.inDays % 365;
-          if (years > 0) return 'Осталось: $years лет $days дней';
-          return 'Осталось: $days дней';
-        } else if (diff.inHours > 0) {
-          return 'Осталось: ${diff.inHours} часов';
-        }
-      }
-      return '';
-    }
-
-    double dailyRate = goal.allowanceAmount!;
-    if (goal.allowancePeriod == 'неделя') {
-      dailyRate = goal.allowanceAmount! / 7;
-    } else if (goal.allowancePeriod == 'месяц') {
-      dailyRate = goal.allowanceAmount! / 30;
-    } else if (goal.allowancePeriod == 'год') {
-      dailyRate = goal.allowanceAmount! / 365;
-    }
-
-    if (dailyRate <= 0) return '';
-
-    final neededAmount = goal.targetAmount - goal.currentAmount;
-    final totalDaysNeeded = neededAmount / dailyRate;
-    
-    final totalHoursNeeded = totalDaysNeeded * 24;
-
-    if (totalHoursNeeded < 24) {
-      return 'Осталось: ${totalHoursNeeded.ceil()} часов';
-    }
-
-    final totalDays = totalDaysNeeded.floor();
-    final years = totalDays ~/ 365;
-    final days = totalDays % 365;
-
-    if (years > 0) {
-      return 'Осталось: $years год $days дней';
-    } else {
-      return 'Осталось: $totalDays дней';
-    }
   }
 
   @override
@@ -2539,8 +2861,9 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Свайпаемый блок целей + последний слайд — добавление новой цели
             SizedBox(
-              height: 310,
+              height: 300,
               child: PageView.builder(
                 controller: _pageController,
                 itemCount: goals.length + 1,
@@ -2551,6 +2874,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
                 itemBuilder: (context, index) {
                   if (index == goals.length) {
+                    // Слайд с кнопкой добавления новой цели
                     return Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 4.0),
                       child: Container(
@@ -2593,8 +2917,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
 
                   final goal = goals[index];
-                  final timeText = _calculateRemainingTimeText(goal);
-
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4.0),
                     child: Container(
@@ -2623,6 +2945,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       child: Stack(
                                         fit: StackFit.expand,
                                         children: [
+                                          // Размытая увеличенная копия фото — заполняет весь блок
                                           Image.file(
                                             File(goal.imagePath!),
                                             fit: BoxFit.cover,
@@ -2633,6 +2956,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                               color: Colors.black.withOpacity(0.12),
                                             ),
                                           ),
+                                          // Чёткое фото поверх, без обрезки
                                           Center(
                                             child: Image.file(
                                               File(goal.imagePath!),
@@ -2662,26 +2986,36 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
                             ),
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 12),
                           Text(
                             goal.goalTitle,
                             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                           ),
-                          const SizedBox(height: 4),
-                          if (goal.allowanceAmount != null && goal.allowanceAmount! > 0) ...[
+                          // (3) Карманные и оценка срока накопления — теперь
+                          // выше цены цели (карманные первыми, "дата
+                          // накопления"/оценка ниже них, но выше цены).
+                          if (goal.dailyAllowance != null && goal.dailyAllowance! > 0) ...[
+                            const SizedBox(height: 4),
                             Text(
-                              'Карманные: ${goal.allowanceAmount!.toInt()} ${goal.currency} в ${goal.allowancePeriod}',
-                              style: TextStyle(fontSize: 12, color: appState.primaryColor, fontWeight: FontWeight.w600),
-                            ),
-                            const SizedBox(height: 2),
-                          ],
-                          if (timeText.isNotEmpty) ...[
-                            Text(
-                              timeText,
+                              'Карманные: ${goal.dailyAllowance!.toInt()} ${goal.currency} ${allowancePeriodLabel(goal.allowancePeriod)}',
                               style: const TextStyle(fontSize: 11, color: Colors.grey),
                             ),
-                            const SizedBox(height: 2),
+                            // Сколько ещё осталось копить при таких
+                            // карманных — в годах/месяцах/днях, а если
+                            // осталось меньше суток — в часах/минутах.
+                            Builder(builder: (context) {
+                              final estimate = estimateRemainingToGoal(goal);
+                              if (estimate == null) return const SizedBox.shrink();
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(
+                                  'Осталось копить: $estimate',
+                                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                                ),
+                              );
+                            }),
                           ],
+                          const SizedBox(height: 4),
                           Text(
                             '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ${goal.currency}',
                             style: TextStyle(fontSize: 18, color: appState.primaryColor, fontWeight: FontWeight.bold),
@@ -2694,6 +3028,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: 10),
+            // Индикатор точек для свайпа целей (включая слайд добавления)
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: List.generate(goals.length + 1, (index) {
@@ -2762,6 +3097,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
               const SizedBox(height: 12),
 
+              // Кнопки быстрого пополнения
               Row(
                 children: <int>[100, 500, 1000].map((amount) {
                   return Expanded(
@@ -2788,6 +3124,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
               const Text('История операций', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
+              // AnimatedSize — плавно меняет высоту блока и при увеличении, и
+              // при уменьшении истории (например, после свайп-удаления записи).
               AnimatedSize(
                 duration: const Duration(milliseconds: 250),
                 curve: Curves.easeInOut,
@@ -2817,6 +3155,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           itemBuilder: (context, index) {
                             final item = goals[currentGoalIndex].history[index];
                             final isAdd = item.startsWith('+');
+                            // (4) Свайп влево — удалить запись; общая высота
+                            // блока (AnimatedSize) плавно уменьшится сама.
                             return Dismissible(
                               key: ValueKey('hist_${currentGoalIndex}_${index}_$item'),
                               direction: DismissDirection.endToStart,
@@ -2859,6 +3199,7 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 24),
             ],
 
+            // Карточка «Поддержать проект»
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -2899,6 +3240,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 16),
 
+            // Карточка «Наш телеграм канал» — теперь кнопка реально отправляет
+            // сообщение разработчику; недоступна на устройстве самого разработчика.
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -2941,6 +3284,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 24),
 
+            // Строка с версией приложения в самом низу — 5 тапов открывают пасхалку
             Center(
               child: GestureDetector(
                 onTap: _handleVersionTap,
