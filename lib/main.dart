@@ -34,8 +34,10 @@ const int _reminderNotificationId = 1001;
 Future<void> _initNotifications() async {
   tz_data.initializeTimeZones();
   try {
-    final String currentTimeZone = await FlutterTimezone.getLocalTimezone();
-    tz.setLocalLocation(tz.getLocation(currentTimeZone));
+    // Свежие версии flutter_timezone возвращают объект TimezoneInfo
+    // (а не String) — берём строковый идентификатор из .identifier.
+    final timezoneInfo = await FlutterTimezone.getLocalTimezone();
+    tz.setLocalLocation(tz.getLocation(timezoneInfo.identifier));
   } catch (e) {
     // ignore: avoid_print
     print('Не удалось определить часовой пояс, используется UTC: $e');
@@ -45,7 +47,9 @@ Future<void> _initNotifications() async {
   const iosSettings = DarwinInitializationSettings();
   const initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
   try {
-    await _notificationsPlugin.initialize(initSettings);
+    // Свежие версии flutter_local_notifications требуют именованный
+    // параметр settings вместо позиционного.
+    await _notificationsPlugin.initialize(settings: initSettings);
   } catch (e) {
     // ignore: avoid_print
     print('Не удалось инициализировать уведомления: $e');
@@ -99,7 +103,9 @@ Future<void> _scheduleReminderNotification({
   required bool daily,
 }) async {
   try {
-    await _notificationsPlugin.cancel(_reminderNotificationId);
+    // Свежие версии flutter_local_notifications требуют именованный
+    // параметр id вместо позиционного.
+    await _notificationsPlugin.cancel(id: _reminderNotificationId);
     final now = tz.TZDateTime.now(tz.local);
     var scheduled = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
     if (scheduled.isBefore(now)) {
@@ -122,13 +128,16 @@ Future<void> _scheduleReminderNotification({
     // сообщение "Напоминание сохранено". Теперь при ошибке точного
     // планирования пробуем неточный режим, чтобы уведомление всё равно
     // пришло (возможно, с небольшим отклонением по времени).
+    // Свежие версии flutter_local_notifications требуют именованные
+    // параметры (id, title, body, scheduledDate, notificationDetails)
+    // вместо позиционных.
     try {
       await _notificationsPlugin.zonedSchedule(
-        _reminderNotificationId,
-        'Я Коплю: мечты',
-        text,
-        scheduled,
-        details,
+        id: _reminderNotificationId,
+        title: 'Я Коплю: мечты',
+        body: text,
+        scheduledDate: scheduled,
+        notificationDetails: details,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         matchDateTimeComponents: daily ? DateTimeComponents.time : null,
       );
@@ -136,11 +145,11 @@ Future<void> _scheduleReminderNotification({
       // ignore: avoid_print
       print('Точное планирование не удалось, пробуем неточное: $e');
       await _notificationsPlugin.zonedSchedule(
-        _reminderNotificationId,
-        'Я Коплю: мечты',
-        text,
-        scheduled,
-        details,
+        id: _reminderNotificationId,
+        title: 'Я Коплю: мечты',
+        body: text,
+        scheduledDate: scheduled,
+        notificationDetails: details,
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         matchDateTimeComponents: daily ? DateTimeComponents.time : null,
       );
