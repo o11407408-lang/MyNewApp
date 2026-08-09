@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
@@ -96,7 +97,10 @@ Future<void> _requestNotificationPermission() async {
 // Планирует напоминание на заданное локальное время. Если daily=true —
 // повторяется каждый день в это же время; если false — сработает один
 // раз на ближайшее наступление этого времени и не повторится.
-Future<void> _scheduleReminderNotification({
+// Возвращает null при успехе или текст ошибки, если не получилось —
+// это позволяет показать пользователю причину прямо в приложении, а не
+// только в консоли (на установленном APK консоль никто не видит).
+Future<String?> _scheduleReminderNotification({
   required int hour,
   required int minute,
   required String text,
@@ -141,22 +145,29 @@ Future<void> _scheduleReminderNotification({
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         matchDateTimeComponents: daily ? DateTimeComponents.time : null,
       );
+      return null;
     } catch (e) {
       // ignore: avoid_print
       print('Точное планирование не удалось, пробуем неточное: $e');
-      await _notificationsPlugin.zonedSchedule(
-        id: _reminderNotificationId,
-        title: 'Я Коплю: мечты',
-        body: text,
-        scheduledDate: scheduled,
-        notificationDetails: details,
-        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-        matchDateTimeComponents: daily ? DateTimeComponents.time : null,
-      );
+      try {
+        await _notificationsPlugin.zonedSchedule(
+          id: _reminderNotificationId,
+          title: 'Я Коплю: мечты',
+          body: text,
+          scheduledDate: scheduled,
+          notificationDetails: details,
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          matchDateTimeComponents: daily ? DateTimeComponents.time : null,
+        );
+        return null;
+      } catch (e2) {
+        return e2.toString();
+      }
     }
   } catch (e) {
     // ignore: avoid_print
     print('Не удалось запланировать напоминание: $e');
+    return e.toString();
   }
 }
 
@@ -424,6 +435,19 @@ class _MyAppState extends State<MyApp> {
     return MaterialApp(
       title: 'Я Коплю: мечты',
       debugShowCheckedModeBanner: false,
+      // (4) Весь стандартный UI (в т.ч. системные диалоги вроде выбора
+      // времени) теперь тоже на русском — приложение всегда открывается
+      // на русской локали, независимо от языка телефона.
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('ru'),
+        Locale('en'),
+      ],
+      locale: const Locale('ru'),
       theme: ThemeData(
         brightness: isDark ? Brightness.dark : Brightness.light,
         scaffoldBackgroundColor: isDark ? const Color(0xFF121212) : const Color(0xFFFBF8FF),
@@ -1746,23 +1770,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  // (3) Даже если введён верный код (в т.ч. "зашитый" прямо в приложении),
-  // без интернета войти в режим разработчика не получится: требуем
-  // подтверждение от сервера (Firestore), а не просто локальную проверку
-  // строки. Source.server запрещает отвечать из локального кэша — если
-  // сети нет, запрос упадёт с ошибкой и мы это поймаем.
-  Future<bool> _isDevCodeOnlineCheckPassed() async {
-    try {
-      final docRef = await _devCodeLockoutDocRef();
-      if (docRef == null) return false;
-      await docRef.get(const GetOptions(source: Source.server));
-      return true;
-    } catch (e) {
-      // ignore: avoid_print
-      print('Нет соединения для входа в режим разработчика: $e');
-      return false;
-    }
-  }
+  // (1) Функция принудительной онлайн-проверки удалена: код разработчика
+  // проверяется полностью локально, вход больше не требует интернета.
 
   String _formatLockoutDuration(Duration d) {
     final totalMinutes = (d.inSeconds / 60).ceil();
@@ -1894,20 +1903,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             _showAppSnackBar('Вы уже вошли в режим разработчика!');
                             return;
                           }
-                          // (3) Код верный, но без интернета всё равно не
-                          // пускаем — нужна связь с сервером.
+                          // (3) Проверка кода — полностью локальная, без
+                          // обращения к серверу: интернет для входа в
+                          // режим разработчика больше не требуется.
                           setModalState(() {
                             showWrongCodeError = false;
                             errorMessage = null;
                           });
-                          final online = await _isDevCodeOnlineCheckPassed();
-                          if (!online) {
-                            setModalState(() {
-                              showWrongCodeError = true;
-                              errorMessage = 'Нужен интернет, чтобы войти в режим разработчика';
-                            });
-                            return;
-                          }
                           await _resetDevCodeAttempts();
                           if (context.mounted) Navigator.pop(context);
                           _enableDevMode();
@@ -2401,9 +2403,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     const SizedBox(height: 12),
                     GestureDetector(
                       onTap: () async {
+                        // (4) inputOnly — сразу поле ручного ввода, без
+                        // циферблата и без кнопки-переключателя в углу.
+                        // alwaysUse24HourFormat — 24-часовой формат без AM/PM.
                         final picked = await showTimePicker(
                           context: context,
                           initialTime: TimeOfDay(hour: selectedReminderHour, minute: selectedReminderMinute),
+                          initialEntryMode: TimePickerEntryMode.inputOnly,
+                          builder: (context, child) {
+                            return MediaQuery(
+                              data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+                              child: child!,
+                            );
+                          },
                         );
                         if (picked != null) {
                           setModalState(() {
@@ -2470,7 +2482,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           await p.setString('reminder_text', text);
                           await p.setBool('reminder_daily', reminderDaily);
                           await _requestNotificationPermission();
-                          await _scheduleReminderNotification(
+                          final scheduleError = await _scheduleReminderNotification(
                             hour: selectedReminderHour,
                             minute: selectedReminderMinute,
                             text: text,
@@ -2478,7 +2490,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           );
                           if (context.mounted) {
                             Navigator.pop(context);
-                            _showAppSnackBar('Напоминание сохранено');
+                            if (scheduleError == null) {
+                              _showAppSnackBar('Напоминание сохранено');
+                            } else {
+                              // Показываем настоящую причину сбоя — на
+                              // установленном APK консоль недоступна, а
+                              // без этого пользователь не понимает, почему
+                              // уведомления не приходят.
+                              _showAppSnackBar('Не удалось запланировать: $scheduleError', isError: true);
+                            }
                           }
                         },
                         child: const Text('Сохранить напоминание', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -2771,10 +2791,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         // сдвигал бы иконку левее границы поля).
                         IconButton(
                           onPressed: () => _showGoalInfoModal(goal),
-                          icon: Icon(Icons.info_outline_rounded, color: appState.primaryColor),
+                          icon: Icon(Icons.info_outline_rounded, color: appState.primaryColor, size: 22),
                           tooltip: 'Информация о цели',
+                          visualDensity: VisualDensity.compact,
                           padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                          alignment: Alignment.centerRight,
                         ),
                       ],
                     ),
