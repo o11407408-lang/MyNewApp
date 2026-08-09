@@ -60,6 +60,9 @@ jobs:
           }
           EOF_DESUGAR
 
+      - name: Install localization package
+        run: flutter pub add flutter_localizations --sdk=flutter
+
       - name: Install dependencies
         run: flutter pub get
 
