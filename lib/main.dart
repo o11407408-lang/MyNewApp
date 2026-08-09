@@ -58,7 +58,14 @@ Future<void> _initNotifications() async {
 }
 
 // Запрашивает разрешение на уведомления у пользователя (Android 13+ и iOS).
-Future<void> _requestNotificationPermission() async {
+// Запрашивает разрешения на уведомления и точные будильники. Возвращает
+// true, если разрешение на показ самих уведомлений реально выдано —
+// это позволяет прямо сказать пользователю, если он его не дал: раньше
+// приложение писало "Напоминание сохранено" даже тогда, когда Android
+// молча не показывал уведомления из-за отключённого разрешения (сам
+// вызов планирования не выбрасывает ошибку — он не проверяет разрешение).
+Future<bool> _requestNotificationPermission() async {
+  bool granted = true;
   try {
     final androidImpl = _notificationsPlugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
@@ -70,7 +77,10 @@ Future<void> _requestNotificationPermission() async {
       // (недоступной для нажатия). Небольшая пауза даёт первому диалогу
       // полностью закрыться, прежде чем откроется следующий.
       try {
-        await androidImpl.requestNotificationsPermission();
+        final result = await androidImpl.requestNotificationsPermission();
+        // null означает, что система не спрашивала (например, Android <13,
+        // где разрешение не требуется) — тогда считаем, что всё в порядке.
+        if (result == false) granted = false;
       } catch (e) {
         // ignore: avoid_print
         print('Не удалось запросить разрешение на уведомления: $e');
@@ -86,12 +96,14 @@ Future<void> _requestNotificationPermission() async {
     final iosImpl = _notificationsPlugin.resolvePlatformSpecificImplementation<
         IOSFlutterLocalNotificationsPlugin>();
     if (iosImpl != null) {
-      await iosImpl.requestPermissions(alert: true, badge: true, sound: true);
+      final result = await iosImpl.requestPermissions(alert: true, badge: true, sound: true);
+      if (result == false) granted = false;
     }
   } catch (e) {
     // ignore: avoid_print
     print('Не удалось запросить разрешение на уведомления: $e');
   }
+  return granted;
 }
 
 // Планирует напоминание на заданное локальное время. Если daily=true —
@@ -2312,11 +2324,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 constraints: BoxConstraints(
                   maxHeight: MediaQuery.of(context).size.height * 0.75,
                 ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+                // (1) Раньше последняя строка списка обрезалась резкой
+                // линией по краю окна. ShaderMask плавно "растворяет"
+                // нижние ~10% высоты в прозрачность — простой блюр-переход
+                // вместо жёсткого обрезания, который заодно подсказывает,
+                // что список можно прокрутить дальше.
+                child: ShaderMask(
+                  shaderCallback: (rect) {
+                    return const LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.black, Colors.black, Colors.transparent],
+                      stops: [0.0, 0.9, 1.0],
+                    ).createShader(rect);
+                  },
+                  blendMode: BlendMode.dstIn,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                     const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 16),
                     SwitchListTile(
@@ -2481,7 +2508,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           await p.setInt('reminder_minute', selectedReminderMinute);
                           await p.setString('reminder_text', text);
                           await p.setBool('reminder_daily', reminderDaily);
-                          await _requestNotificationPermission();
+                          final permissionGranted = await _requestNotificationPermission();
                           final scheduleError = await _scheduleReminderNotification(
                             hour: selectedReminderHour,
                             minute: selectedReminderMinute,
@@ -2490,7 +2517,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           );
                           if (context.mounted) {
                             Navigator.pop(context);
-                            if (scheduleError == null) {
+                            if (!permissionGranted) {
+                              // Планирование могло пройти без ошибок, но
+                              // Android всё равно не покажет уведомление,
+                              // если разрешение отключено — говорим об
+                              // этом прямо, а не пишем "сохранено".
+                              _showAppSnackBar(
+                                'Время сохранено, но уведомления выключены. Включите их вручную: Настройки телефона → Приложения → Я Коплю → Уведомления',
+                                isError: true,
+                              );
+                            } else if (scheduleError == null) {
                               _showAppSnackBar('Напоминание сохранено');
                             } else {
                               // Показываем настоящую причину сбоя — на
@@ -2642,6 +2678,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                     ],
                   ),
+                ),
                 ),
               ),
             );
