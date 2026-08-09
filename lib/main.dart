@@ -798,16 +798,17 @@ String pluralizeRu(int n, String one, String few, String many) {
 // "1 год 1 день", "3 месяца", "5 дней" — а если до цели остаётся меньше
 // суток, то в часах/минутах (с учётом текущего времени и часового пояса
 // устройства, т.к. используется DateTime.now(), который всегда локальный).
+// (4) Без слова "через" в начале — просто длительность.
 String formatRemainingDuration(DateTime from, DateTime to) {
   final diff = to.difference(from);
   if (diff.inHours < 24) {
     if (diff.inMinutes < 60) {
       final minutes = diff.inMinutes <= 0 ? 1 : diff.inMinutes;
-      return 'через $minutes ${pluralizeRu(minutes, 'минуту', 'минуты', 'минут')}';
+      return '$minutes ${pluralizeRu(minutes, 'минуту', 'минуты', 'минут')}';
     }
     final hours = diff.inMinutes / 60.0;
     final roundedHours = hours.ceil();
-    return 'через $roundedHours ${pluralizeRu(roundedHours, 'час', 'часа', 'часов')}';
+    return '$roundedHours ${pluralizeRu(roundedHours, 'час', 'часа', 'часов')}';
   }
 
   int years = to.year - from.year;
@@ -828,7 +829,7 @@ String formatRemainingDuration(DateTime from, DateTime to) {
   if (months > 0) parts.add('$months ${pluralizeRu(months, 'месяц', 'месяца', 'месяцев')}');
   if (days > 0 || parts.isEmpty) parts.add('$days ${pluralizeRu(days, 'день', 'дня', 'дней')}');
 
-  return 'через ${parts.join(' ')}';
+  return parts.join(' ');
 }
 
 // Оценка того, сколько ещё осталось копить при текущих карманных деньгах.
@@ -1745,6 +1746,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  // (3) Даже если введён верный код (в т.ч. "зашитый" прямо в приложении),
+  // без интернета войти в режим разработчика не получится: требуем
+  // подтверждение от сервера (Firestore), а не просто локальную проверку
+  // строки. Source.server запрещает отвечать из локального кэша — если
+  // сети нет, запрос упадёт с ошибкой и мы это поймаем.
+  Future<bool> _isDevCodeOnlineCheckPassed() async {
+    try {
+      final docRef = await _devCodeLockoutDocRef();
+      if (docRef == null) return false;
+      await docRef.get(const GetOptions(source: Source.server));
+      return true;
+    } catch (e) {
+      // ignore: avoid_print
+      print('Нет соединения для входа в режим разработчика: $e');
+      return false;
+    }
+  }
+
   String _formatLockoutDuration(Duration d) {
     final totalMinutes = (d.inSeconds / 60).ceil();
     return '$totalMinutes ${pluralizeRu(totalMinutes, 'минуту', 'минуты', 'минут')}';
@@ -1867,6 +1886,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           return;
                         }
                         if (codeController.text.trim() == _decodedDevCode()) {
+                          // (1) Если уже в режиме разработчика — не
+                          // активируем повторно и не пишем "активирован",
+                          // а честно говорим, что уже вошли.
+                          if (_devModeEnabled) {
+                            if (context.mounted) Navigator.pop(context);
+                            _showAppSnackBar('Вы уже вошли в режим разработчика!');
+                            return;
+                          }
+                          // (3) Код верный, но без интернета всё равно не
+                          // пускаем — нужна связь с сервером.
+                          setModalState(() {
+                            showWrongCodeError = false;
+                            errorMessage = null;
+                          });
+                          final online = await _isDevCodeOnlineCheckPassed();
+                          if (!online) {
+                            setModalState(() {
+                              showWrongCodeError = true;
+                              errorMessage = 'Нужен интернет, чтобы войти в режим разработчика';
+                            });
+                            return;
+                          }
                           await _resetDevCodeAttempts();
                           if (context.mounted) Navigator.pop(context);
                           _enableDevMode();
@@ -2716,16 +2757,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Expanded(
-                          child: Text('Изменить цель ${currentGoalIndex + 1}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                          child: Text(
+                            'Изменить цель "${goal.goalTitle}"',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                          ),
                         ),
-                        // (1) Кнопка «Информация о цели» переехала сюда, в
-                        // правый верхний угол окна изменения цели. Оставлена
-                        // только одна окружность — сама иконка info_outline
-                        // (без дополнительного фонового кружка вокруг неё).
+                        // (1)/(8) Кнопка «Информация о цели» — в правом
+                        // верхнем углу, выровнена по правому краю поля
+                        // «Название цели» ниже (padding: zero убирает
+                        // стандартный отступ IconButton, который иначе
+                        // сдвигал бы иконку левее границы поля).
                         IconButton(
                           onPressed: () => _showGoalInfoModal(goal),
                           icon: Icon(Icons.info_outline_rounded, color: appState.primaryColor),
                           tooltip: 'Информация о цели',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
                         ),
                       ],
                     ),
@@ -2814,8 +2863,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         );
                       }).toList(),
                     ),
-                    // (2) Желаемая дата/время, до которого хочется накопить.
-                    // Видна и редактируется только здесь, в настройках цели.
+                    // (5)/(6) Желаемая дата накопления редактируется
+                    // только здесь (в "Изменить цель"); в информации о
+                    // цели она показывается уже неизменяемым параметром.
+                    // Только дата, без конкретного времени — время не
+                    // спрашиваем и не показываем.
                     const SizedBox(height: 16),
                     const Text('Желаемая дата накопления (необязательно)', style: TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w400)),
                     const SizedBox(height: 8),
@@ -2831,22 +2883,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 lastDate: DateTime(DateTime.now().year + 50),
                               );
                               if (pickedDate == null) return;
-                              if (!context.mounted) return;
-                              final pickedTime = await showTimePicker(
-                                context: context,
-                                initialTime: selectedTargetDate != null
-                                    ? TimeOfDay.fromDateTime(selectedTargetDate!)
-                                    : const TimeOfDay(hour: 12, minute: 0),
-                              );
-                              if (pickedTime == null) return;
                               setModalState(() {
-                                selectedTargetDate = DateTime(
-                                  pickedDate.year,
-                                  pickedDate.month,
-                                  pickedDate.day,
-                                  pickedTime.hour,
-                                  pickedTime.minute,
-                                );
+                                selectedTargetDate = DateTime(pickedDate.year, pickedDate.month, pickedDate.day);
                               });
                             },
                             child: Container(
@@ -2863,7 +2901,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   Expanded(
                                     child: Text(
                                       selectedTargetDate != null
-                                          ? '${selectedTargetDate!.day.toString().padLeft(2, '0')}.${selectedTargetDate!.month.toString().padLeft(2, '0')}.${selectedTargetDate!.year} в ${selectedTargetDate!.hour.toString().padLeft(2, '0')}:${selectedTargetDate!.minute.toString().padLeft(2, '0')}'
+                                          ? '${selectedTargetDate!.day.toString().padLeft(2, '0')}.${selectedTargetDate!.month.toString().padLeft(2, '0')}.${selectedTargetDate!.year}'
                                           : 'Не выбрана',
                                       style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
                                     ),
