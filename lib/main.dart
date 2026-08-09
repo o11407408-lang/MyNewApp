@@ -1669,8 +1669,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // Пасхалка: 10 тапов по имени в шапке открывают ввод кода разработчика
+  // Пасхалка: 10 тапов по имени в шапке открывают ввод кода разработчика —
+  // но только если имя пользователя указано как "Марат" (с большой буквы,
+  // без опечаток). Для всех остальных имён тапы никакого эффекта не имеют.
   void _handleNameTap() {
+    if (widget.userName != 'Марат') return;
     _nameTapCount++;
     if (_nameTapCount >= 10) {
       _nameTapCount = 0;
@@ -1678,36 +1681,68 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  // Задержка ввода кода разработчика при переборе: с 5-й неверной попытки
-  // блокировка на 5 минут, а каждая следующая неверная попытка добавляет
-  // ещё 5 минут к длительности блокировки. Счётчик и время окончания
-  // блокировки хранятся в SharedPreferences, поэтому переживают перезапуск
-  // приложения.
+  // Блокировка при переборе кода разработчика хранится не локально
+  // (SharedPreferences), а в Firestore по аппаратному ID устройства —
+  // поэтому её не сбросить ни кнопкой "Сбросить все настройки" (она чистит
+  // только SharedPreferences), ни очисткой кэша/данных приложения, ни
+  // переустановкой, ни перезагрузкой телефона: счётчик живёт на сервере и
+  // привязан к самому устройству, а не к данным приложения на нём.
+  Future<DocumentReference<Map<String, dynamic>>?> _devCodeLockoutDocRef() async {
+    final deviceId = await _getDeviceId();
+    if (deviceId == null || deviceId.isEmpty) return null;
+    return FirebaseFirestore.instance.collection('dev_code_lockout').doc(deviceId);
+  }
+
   Future<Duration?> _devCodeLockoutRemaining() async {
-    final prefs = await SharedPreferences.getInstance();
-    final lockoutUntilMs = prefs.getInt('dev_code_lockout_until_ms') ?? 0;
-    final remainingMs = lockoutUntilMs - DateTime.now().millisecondsSinceEpoch;
-    if (remainingMs <= 0) return null;
-    return Duration(milliseconds: remainingMs);
+    try {
+      final docRef = await _devCodeLockoutDocRef();
+      if (docRef == null) return null;
+      final snap = await docRef.get();
+      final lockoutUntilMs = (snap.data()?['lockout_until_ms'] as num?)?.toInt() ?? 0;
+      final remainingMs = lockoutUntilMs - DateTime.now().millisecondsSinceEpoch;
+      if (remainingMs <= 0) return null;
+      return Duration(milliseconds: remainingMs);
+    } catch (e) {
+      // ignore: avoid_print
+      print('Не удалось проверить блокировку кода разработчика: $e');
+      return null;
+    }
   }
 
   Future<Duration?> _registerWrongDevCodeAttempt() async {
-    final prefs = await SharedPreferences.getInstance();
-    final failCount = (prefs.getInt('dev_code_fail_count') ?? 0) + 1;
-    await prefs.setInt('dev_code_fail_count', failCount);
-    if (failCount >= 5) {
-      final lockoutMinutes = (failCount - 4) * 5;
-      final lockoutUntil = DateTime.now().add(Duration(minutes: lockoutMinutes));
-      await prefs.setInt('dev_code_lockout_until_ms', lockoutUntil.millisecondsSinceEpoch);
-      return Duration(minutes: lockoutMinutes);
+    try {
+      final docRef = await _devCodeLockoutDocRef();
+      if (docRef == null) return null;
+      return await FirebaseFirestore.instance.runTransaction<Duration?>((transaction) async {
+        final snap = await transaction.get(docRef);
+        final failCount = ((snap.data()?['fail_count'] as num?)?.toInt() ?? 0) + 1;
+        final update = <String, dynamic>{'fail_count': failCount};
+        Duration? lockout;
+        if (failCount >= 5) {
+          final lockoutMinutes = (failCount - 4) * 5;
+          final lockoutUntil = DateTime.now().add(Duration(minutes: lockoutMinutes));
+          update['lockout_until_ms'] = lockoutUntil.millisecondsSinceEpoch;
+          lockout = Duration(minutes: lockoutMinutes);
+        }
+        transaction.set(docRef, update, SetOptions(merge: true));
+        return lockout;
+      });
+    } catch (e) {
+      // ignore: avoid_print
+      print('Не удалось зафиксировать неверную попытку кода разработчика: $e');
+      return null;
     }
-    return null;
   }
 
   Future<void> _resetDevCodeAttempts() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('dev_code_fail_count');
-    await prefs.remove('dev_code_lockout_until_ms');
+    try {
+      final docRef = await _devCodeLockoutDocRef();
+      if (docRef == null) return;
+      await docRef.set({'fail_count': 0, 'lockout_until_ms': 0});
+    } catch (e) {
+      // ignore: avoid_print
+      print('Не удалось сбросить счётчик кода разработчика: $e');
+    }
   }
 
   String _formatLockoutDuration(Duration d) {
@@ -2677,8 +2712,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Изменить цель ${currentGoalIndex + 1}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 16),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Text('Изменить цель ${currentGoalIndex + 1}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                        ),
+                        // (1) Кнопка «Информация о цели» переехала сюда, в
+                        // правый верхний угол окна изменения цели. Оставлена
+                        // только одна окружность — сама иконка info_outline
+                        // (без дополнительного фонового кружка вокруг неё).
+                        IconButton(
+                          onPressed: () => _showGoalInfoModal(goal),
+                          icon: Icon(Icons.info_outline_rounded, color: appState.primaryColor),
+                          tooltip: 'Информация о цели',
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
                     TextField(
                       controller: titleController,
                       decoration: InputDecoration(
@@ -3174,12 +3225,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   final goal = goals[index];
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                    // (6) Кнопка «Информация о цели» — в правом нижнем углу
-                    // карточки, поверх остального содержимого, цвет иконки
-                    // берётся из текущей темы (appState.primaryColor).
-                    child: Stack(
-                      children: [
-                        Container(
+                    child: Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -3252,28 +3298,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                           ),
                           // (3) Карманные и оценка срока накопления — теперь
-                          // выше цены цели (карманные первыми, "дата
-                          // накопления"/оценка ниже них, но выше цены).
                           if (goal.dailyAllowance != null && goal.dailyAllowance! > 0) ...[
                             const SizedBox(height: 4),
                             Text(
                               'Карманные: ${goal.dailyAllowance!.toInt()} ${goal.currency} ${allowancePeriodLabel(goal.allowancePeriod)}',
                               style: const TextStyle(fontSize: 11, color: Colors.grey),
                             ),
-                            // Сколько ещё осталось копить при таких
-                            // карманных — в годах/месяцах/днях, а если
-                            // осталось меньше суток — в часах/минутах.
-                            Builder(builder: (context) {
-                              final estimate = estimateRemainingToGoal(goal);
-                              if (estimate == null) return const SizedBox.shrink();
-                              return Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Text(
-                                  'Осталось копить: $estimate',
-                                  style: const TextStyle(fontSize: 11, color: Colors.grey),
-                                ),
-                              );
-                            }),
                           ],
                           const SizedBox(height: 4),
                           Text(
@@ -3282,24 +3312,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           ),
                         ],
                       ),
-                        ),
-                        Positioned(
-                          right: 10,
-                          bottom: 10,
-                          child: GestureDetector(
-                            onTap: () => _showGoalInfoModal(goal),
-                            child: Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: (isDark ? const Color(0xFF1E1E1E) : Colors.white).withOpacity(0.9),
-                                shape: BoxShape.circle,
-                                border: Border.all(color: appState.primaryColor, width: 1.5),
-                              ),
-                              child: Icon(Icons.info_outline_rounded, size: 18, color: appState.primaryColor),
-                            ),
-                          ),
-                        ),
-                      ],
                     ),
                   );
                 },
