@@ -11,10 +11,9 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:timezone/timezone.dart' as tz;
-import 'package:timezone/data/latest_all.dart' as tz_data;
-import 'package:flutter_timezone/flutter_timezone.dart';
+// (4) Push/локальные уведомления полностью убраны из приложения — они
+// так и не заработали надёжно, поэтому вместо очередной попытки чинить
+// весь блок кода и UI, связанный с напоминаниями, удалён.
 
 // Код доступа к режиму разработчика больше НЕ отправляется на сервер и
 // не хранится открытым текстом — он побайтово обфусцирован (XOR)
@@ -26,161 +25,6 @@ const int _devCodeXorKey = 47;
 
 String _decodedDevCode() {
   return String.fromCharCodes(_obfuscatedDevCode.map((b) => b ^ _devCodeXorKey));
-}
-
-// --- Локальные напоминания (flutter_local_notifications) ---
-final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
-const int _reminderNotificationId = 1001;
-
-Future<void> _initNotifications() async {
-  tz_data.initializeTimeZones();
-  try {
-    // Свежие версии flutter_timezone возвращают объект TimezoneInfo
-    // (а не String) — берём строковый идентификатор из .identifier.
-    final timezoneInfo = await FlutterTimezone.getLocalTimezone();
-    tz.setLocalLocation(tz.getLocation(timezoneInfo.identifier));
-  } catch (e) {
-    // ignore: avoid_print
-    print('Не удалось определить часовой пояс, используется UTC: $e');
-  }
-
-  const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const iosSettings = DarwinInitializationSettings();
-  const initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
-  try {
-    // Свежие версии flutter_local_notifications требуют именованный
-    // параметр settings вместо позиционного.
-    await _notificationsPlugin.initialize(settings: initSettings);
-  } catch (e) {
-    // ignore: avoid_print
-    print('Не удалось инициализировать уведомления: $e');
-  }
-}
-
-// Запрашивает разрешение на уведомления у пользователя (Android 13+ и iOS).
-// Запрашивает разрешения на уведомления и точные будильники. Возвращает
-// true, если разрешение на показ самих уведомлений реально выдано —
-// это позволяет прямо сказать пользователю, если он его не дал: раньше
-// приложение писало "Напоминание сохранено" даже тогда, когда Android
-// молча не показывал уведомления из-за отключённого разрешения (сам
-// вызов планирования не выбрасывает ошибку — он не проверяет разрешение).
-Future<bool> _requestNotificationPermission() async {
-  bool granted = true;
-  try {
-    final androidImpl = _notificationsPlugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
-    if (androidImpl != null) {
-      // Запросы разрешений разделены на отдельные try/catch и идут не
-      // "впритык" друг за другом: если экран обычных уведомлений и экран
-      // точных будильников открываются одновременно/слишком быстро, кнопка
-      // разрешения на экране будильников иногда отрисовывается серой
-      // (недоступной для нажатия). Небольшая пауза даёт первому диалогу
-      // полностью закрыться, прежде чем откроется следующий.
-      try {
-        final result = await androidImpl.requestNotificationsPermission();
-        // null означает, что система не спрашивала (например, Android <13,
-        // где разрешение не требуется) — тогда считаем, что всё в порядке.
-        if (result == false) granted = false;
-      } catch (e) {
-        // ignore: avoid_print
-        print('Не удалось запросить разрешение на уведомления: $e');
-      }
-      await Future.delayed(const Duration(milliseconds: 400));
-      try {
-        await androidImpl.requestExactAlarmsPermission();
-      } catch (e) {
-        // ignore: avoid_print
-        print('Не удалось запросить разрешение на точные будильники: $e');
-      }
-    }
-    final iosImpl = _notificationsPlugin.resolvePlatformSpecificImplementation<
-        IOSFlutterLocalNotificationsPlugin>();
-    if (iosImpl != null) {
-      final result = await iosImpl.requestPermissions(alert: true, badge: true, sound: true);
-      if (result == false) granted = false;
-    }
-  } catch (e) {
-    // ignore: avoid_print
-    print('Не удалось запросить разрешение на уведомления: $e');
-  }
-  return granted;
-}
-
-// Планирует напоминание на заданное локальное время. Если daily=true —
-// повторяется каждый день в это же время; если false — сработает один
-// раз на ближайшее наступление этого времени и не повторится.
-// Возвращает null при успехе или текст ошибки, если не получилось —
-// это позволяет показать пользователю причину прямо в приложении, а не
-// только в консоли (на установленном APK консоль никто не видит).
-Future<String?> _scheduleReminderNotification({
-  required int hour,
-  required int minute,
-  required String text,
-  required bool daily,
-}) async {
-  try {
-    // Свежие версии flutter_local_notifications требуют именованный
-    // параметр id вместо позиционного.
-    await _notificationsPlugin.cancel(id: _reminderNotificationId);
-    final now = tz.TZDateTime.now(tz.local);
-    var scheduled = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
-    if (scheduled.isBefore(now)) {
-      scheduled = scheduled.add(const Duration(days: 1));
-    }
-    const androidDetails = AndroidNotificationDetails(
-      'daily_reminder_channel',
-      'Напоминания',
-      channelDescription: 'Ежедневные напоминания пополнить копилку',
-      importance: Importance.high,
-      priority: Priority.high,
-    );
-    const iosDetails = DarwinNotificationDetails();
-    const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
-
-    // Баг: если разрешение на точные будильники не выдано (например,
-    // пользователь его не подтвердил), exactAllowWhileIdle выбрасывает
-    // исключение и раньше оно просто "проглатывалось" в catch ниже —
-    // уведомление молча не планировалось, хотя пользователь видел
-    // сообщение "Напоминание сохранено". Теперь при ошибке точного
-    // планирования пробуем неточный режим, чтобы уведомление всё равно
-    // пришло (возможно, с небольшим отклонением по времени).
-    // Свежие версии flutter_local_notifications требуют именованные
-    // параметры (id, title, body, scheduledDate, notificationDetails)
-    // вместо позиционных.
-    try {
-      await _notificationsPlugin.zonedSchedule(
-        id: _reminderNotificationId,
-        title: 'Я Коплю: мечты',
-        body: text,
-        scheduledDate: scheduled,
-        notificationDetails: details,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-        matchDateTimeComponents: daily ? DateTimeComponents.time : null,
-      );
-      return null;
-    } catch (e) {
-      // ignore: avoid_print
-      print('Точное планирование не удалось, пробуем неточное: $e');
-      try {
-        await _notificationsPlugin.zonedSchedule(
-          id: _reminderNotificationId,
-          title: 'Я Коплю: мечты',
-          body: text,
-          scheduledDate: scheduled,
-          notificationDetails: details,
-          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-          matchDateTimeComponents: daily ? DateTimeComponents.time : null,
-        );
-        return null;
-      } catch (e2) {
-        return e2.toString();
-      }
-    }
-  } catch (e) {
-    // ignore: avoid_print
-    print('Не удалось запланировать напоминание: $e');
-    return e.toString();
-  }
 }
 
 // (7) Быстрая проверка реального соединения с интернетом через
@@ -305,7 +149,6 @@ Future<void> _handleInactivityAndInstallTracking() async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await _initNotifications();
   // Firebase нужен для режима разработчика (пожертвования видны на всех
   // устройствах). Если проект ещё не настроен через `flutterfire configure`,
   // оборачиваем в try/catch, чтобы остальное приложение работало без сбоев.
@@ -334,16 +177,6 @@ void main() async {
   final isDark = prefs.getBool('is_dark') ?? false;
   final colorIndex = prefs.getInt('color_index') ?? 0;
 
-  // Если пользователь уже настраивал напоминание раньше — восстанавливаем
-  // его расписание при каждом холодном запуске приложения.
-  final reminderHour = prefs.getInt('reminder_hour');
-  final reminderMinute = prefs.getInt('reminder_minute');
-  final reminderText = prefs.getString('reminder_text');
-  final reminderDaily = prefs.getBool('reminder_daily') ?? true;
-  if (reminderHour != null && reminderMinute != null && reminderText != null && reminderText.isNotEmpty) {
-    _scheduleReminderNotification(hour: reminderHour, minute: reminderMinute, text: reminderText, daily: reminderDaily);
-  }
-
   runApp(MyApp(
     isRegistered: isRegistered,
     savedName: savedName,
@@ -351,6 +184,144 @@ void main() async {
     initialIsDark: isDark,
     initialColorIndex: colorIndex,
   ));
+}
+
+// (1) Свайп вниз закрывает любое всплывающее окно (настройки, вход в режим
+// разработчика, таблица лидеров и т.д.) — даже когда палец находится не над
+// "ручкой", а прямо над содержимым, и даже если внутри окна прокручиваемый
+// список уже докручен доверху. Для обычного контента ловим вертикальный
+// драг напрямую; для прокручиваемых списков (SingleChildScrollView/ListView)
+// в момент, когда дальше скроллить некуда, дополнительное движение вниз
+// приходит как OverscrollNotification — его тоже засчитываем.
+class _SwipeDownToClose extends StatefulWidget {
+  final Widget child;
+  const _SwipeDownToClose({required this.child});
+
+  @override
+  State<_SwipeDownToClose> createState() => _SwipeDownToCloseState();
+}
+
+class _SwipeDownToCloseState extends State<_SwipeDownToClose> {
+  double _dragDistance = 0;
+  static const double _closeThreshold = 60;
+
+  void _tryClose() {
+    if (!mounted) return;
+    if (Navigator.canPop(context)) {
+      _dragDistance = 0;
+      Navigator.pop(context);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return NotificationListener<OverscrollNotification>(
+      onNotification: (notification) {
+        if (notification.overscroll < 0) {
+          _dragDistance += -notification.overscroll;
+          if (_dragDistance > _closeThreshold) {
+            _tryClose();
+          }
+        }
+        return false;
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onVerticalDragUpdate: (details) {
+          final delta = details.primaryDelta;
+          if (delta != null && delta > 0) {
+            _dragDistance += delta;
+            if (_dragDistance > _closeThreshold) {
+              _tryClose();
+            }
+          } else {
+            _dragDistance = 0;
+          }
+        },
+        onVerticalDragEnd: (_) => _dragDistance = 0,
+        onVerticalDragCancel: () => _dragDistance = 0,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+// (3) Короткое всплывающее уведомление снизу экрана (замена стандартного
+// SnackBar): появляется, поднимаясь снизу и проявляясь, а через паузу
+// явно "уплывает" вниз и растворяется — вместо мгновенного исчезновения.
+class _FlyingToast extends StatefulWidget {
+  final String message;
+  final Color backgroundColor;
+  final VoidCallback onDismissed;
+
+  const _FlyingToast({
+    required this.message,
+    required this.backgroundColor,
+    required this.onDismissed,
+  });
+
+  @override
+  State<_FlyingToast> createState() => _FlyingToastState();
+}
+
+class _FlyingToastState extends State<_FlyingToast> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<Offset> _offset;
+  late final Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 260));
+    _offset = Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
+        .animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
+    _opacity = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
+    _controller.forward();
+    _scheduleDismiss();
+  }
+
+  Future<void> _scheduleDismiss() async {
+    await Future.delayed(const Duration(seconds: 2));
+    if (!mounted) return;
+    // Проигрываем анимацию появления в обратном порядке — тост уходит
+    // вниз экрана и растворяется, а не исчезает мгновенно.
+    await _controller.reverse();
+    if (!mounted) return;
+    widget.onDismissed();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SlideTransition(
+      position: _offset,
+      child: FadeTransition(
+        opacity: _opacity,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            decoration: BoxDecoration(
+              color: widget.backgroundColor,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 12, offset: const Offset(0, 4)),
+              ],
+            ),
+            child: Text(
+              widget.message,
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class MyApp extends StatefulWidget {
@@ -442,10 +413,6 @@ class _MyAppState extends State<MyApp> {
       userLastName = lastName;
       isRegistered = true;
     });
-    // (1) Запрашиваем разрешение на уведомления сразу при первом входе.
-    // Сами уведомления при этом ещё НЕ начнут приходить — время и текст
-    // нужно будет задать в настройках.
-    _requestNotificationPermission();
   }
 
   void resetAllData() async {
@@ -1307,24 +1274,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _showAppSnackBar(wasAchieved ? 'Цель удалена и сохранена в истории желаний' : 'Цель сброшена');
   }
 
-  // Единый стиль коротких уведомлений — закруглённые, в цвет темы,
-  // "плавающие" над низом экрана, вместо стандартной чёрной полосы Android.
+  // (3) Единый стиль коротких уведомлений — закруглённые, в цвет темы,
+  // "плавающие" над низом экрана. Раньше использовался стандартный
+  // ScaffoldMessenger.showSnackBar без явной анимации исчезновения —
+  // теперь это собственный Overlay-тост, который явно "уплывает" вниз
+  // экрана и растворяется, а не пропадает резко.
   void _showAppSnackBar(String message, {bool isError = false}) {
     if (!mounted) return;
     final appState = MyApp.of(context)!;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          message,
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+    final overlay = Overlay.of(context);
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (overlayContext) => Positioned(
+        left: 16,
+        right: 16,
+        bottom: 24 + MediaQuery.of(overlayContext).padding.bottom,
+        child: _FlyingToast(
+          message: message,
+          backgroundColor: isError ? (Colors.red[400] ?? Colors.red) : appState.primaryColor,
+          onDismissed: () {
+            if (entry.mounted) entry.remove();
+          },
         ),
-        backgroundColor: isError ? Colors.red[400] : appState.primaryColor,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        duration: const Duration(seconds: 2),
       ),
     );
+    overlay.insert(entry);
   }
 
   void _showComingSoonBottomSheet(String title, String description) {
@@ -1335,7 +1309,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
+        return _SwipeDownToClose(child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1367,7 +1341,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
@@ -1383,7 +1357,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Container(
+        return _SwipeDownToClose(child: Container(
           padding: const EdgeInsets.all(24.0),
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(context).size.height * 0.7,
@@ -1398,7 +1372,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               Text('Пожертвования', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
               const SizedBox(height: 8),
               const Text(
-                'Сравнение накоплений и достижения других пользователей!',
+                'Сравните',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 13, color: Colors.grey),
               ),
@@ -1426,10 +1400,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             return const Center(child: CircularProgressIndicator());
                           }
                           if (connSnapshot.data == false) {
+                            // (6) Раньше было красным и жирным — слишком
+                            // тревожно для обычного отсутствия сети,
+                            // приводим к тому же спокойному серому стилю,
+                            // что и остальные статусные надписи здесь.
                             return const Center(
                               child: Text(
                                 'Нет соединения с интернетом',
-                                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                                style: TextStyle(color: Colors.grey),
                               ),
                             );
                           }
@@ -1503,7 +1481,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
@@ -1517,7 +1495,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
+        return _SwipeDownToClose(child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1570,7 +1548,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
@@ -1584,7 +1562,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
+        return _SwipeDownToClose(child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1637,7 +1615,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
@@ -1650,7 +1628,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
+        return _SwipeDownToClose(child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1702,7 +1680,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
@@ -1717,7 +1695,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
+        return _SwipeDownToClose(child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1743,7 +1721,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
@@ -1833,8 +1811,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return '$totalMinutes ${pluralizeRu(totalMinutes, 'минуту', 'минуты', 'минут')}';
   }
 
-  // (10) Модалка ввода кода теперь не закрывается случайно от лишнего тапа:
-  // isDismissible/enableDrag выключены, выйти можно только через крестик.
+  // (10) Модалка ввода кода не закрывается случайно от тапа по фону
+  // (isDismissible: false) и от системного drag-хендла (enableDrag: false),
+  // но осознанный свайп вниз (через _SwipeDownToClose) по-прежнему закрывает
+  // её, как и все остальные всплывающие окна — так же, как и крестик.
   void _showDevCodeModal() async {
     if (_devCodeModalOpen) return;
     _devCodeModalOpen = true;
@@ -1862,7 +1842,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return StatefulBuilder(
+        return _SwipeDownToClose(child: StatefulBuilder(
           builder: (context, setModalState) {
             return Padding(
               padding: EdgeInsets.only(
@@ -1990,7 +1970,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             );
           },
-        );
+        ));
       },
     ).then((_) {
       // Окно закрылось (любым способом) — снова разрешаем открыть его.
@@ -2030,7 +2010,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
+        return _SwipeDownToClose(child: Padding(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom + 24,
             top: 24,
@@ -2092,7 +2072,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
@@ -2109,7 +2089,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
+        return _SwipeDownToClose(child: Padding(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom + 24,
             top: 24,
@@ -2171,7 +2151,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
@@ -2186,7 +2166,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Container(
+        return _SwipeDownToClose(child: Container(
           padding: const EdgeInsets.all(24.0),
           constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
           child: Column(
@@ -2279,7 +2259,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
@@ -2294,7 +2274,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Container(
+        return _SwipeDownToClose(child: Container(
           padding: const EdgeInsets.all(24.0),
           constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
           child: Column(
@@ -2352,19 +2332,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
 
   Future<void> _showSettingsModal() async {
-    final prefs = await SharedPreferences.getInstance();
-    int selectedReminderHour = prefs.getInt('reminder_hour') ?? 22;
-    int selectedReminderMinute = prefs.getInt('reminder_minute') ?? 55;
-    bool reminderDaily = prefs.getBool('reminder_daily') ?? true;
-    final reminderTextController = TextEditingController(
-      text: prefs.getString('reminder_text') ?? 'Пополни копилку!',
-    );
     // (1) Затухание внизу списка теперь отслеживает прокрутку: как только
     // пользователь долистал до самого конца — прятать нечего, и градиент
     // отключается полностью (без него список выглядит просто обрезанным
@@ -2380,7 +2353,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return StatefulBuilder(
+        return _SwipeDownToClose(child: StatefulBuilder(
           builder: (context, setModalState) {
             return Padding(
               padding: EdgeInsets.only(
@@ -2510,135 +2483,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         label: const Text('История желаний', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ),
-                    // Напоминания: время, текст (до 20 символов) и галочка
-                    // "каждый день". Само разрешение уже было запрошено при
-                    // первом входе — здесь только настраивается расписание.
-                    const SizedBox(height: 20),
-                    const Divider(),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Icon(Icons.notifications_outlined, size: 16, color: appState.primaryColor),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Напоминания',
-                          style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    GestureDetector(
-                      onTap: () async {
-                        // (4) inputOnly — сразу поле ручного ввода, без
-                        // циферблата и без кнопки-переключателя в углу.
-                        // alwaysUse24HourFormat — 24-часовой формат без AM/PM.
-                        final picked = await showTimePicker(
-                          context: context,
-                          initialTime: TimeOfDay(hour: selectedReminderHour, minute: selectedReminderMinute),
-                          initialEntryMode: TimePickerEntryMode.inputOnly,
-                          builder: (context, child) {
-                            return MediaQuery(
-                              data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
-                              child: child!,
-                            );
-                          },
-                        );
-                        if (picked != null) {
-                          setModalState(() {
-                            selectedReminderHour = picked.hour;
-                            selectedReminderMinute = picked.minute;
-                          });
-                        }
-                      },
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                        decoration: BoxDecoration(
-                          color: appState.primaryColor.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(Icons.access_time_rounded, size: 18, color: appState.primaryColor),
-                            const SizedBox(width: 10),
-                            Text(
-                              'Время напоминания: ${selectedReminderHour.toString().padLeft(2, '0')}:${selectedReminderMinute.toString().padLeft(2, '0')}',
-                              style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: reminderTextController,
-                      maxLength: 20,
-                      decoration: InputDecoration(
-                        labelText: 'Текст уведомления',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                    ),
-                    CheckboxListTile(
-                      contentPadding: EdgeInsets.zero,
-                      controlAffinity: ListTileControlAffinity.leading,
-                      title: const Text('Отправлять каждый день', style: TextStyle(fontSize: 13)),
-                      value: reminderDaily,
-                      activeColor: appState.primaryColor,
-                      onChanged: (val) => setModalState(() => reminderDaily = val ?? true),
-                    ),
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: appState.primaryColor,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        ),
-                        onPressed: () async {
-                          final text = reminderTextController.text.trim();
-                          if (text.isEmpty) {
-                            _showAppSnackBar('Введите текст уведомления', isError: true);
-                            return;
-                          }
-                          final p = await SharedPreferences.getInstance();
-                          await p.setInt('reminder_hour', selectedReminderHour);
-                          await p.setInt('reminder_minute', selectedReminderMinute);
-                          await p.setString('reminder_text', text);
-                          await p.setBool('reminder_daily', reminderDaily);
-                          final permissionGranted = await _requestNotificationPermission();
-                          final scheduleError = await _scheduleReminderNotification(
-                            hour: selectedReminderHour,
-                            minute: selectedReminderMinute,
-                            text: text,
-                            daily: reminderDaily,
-                          );
-                          if (context.mounted) {
-                            Navigator.pop(context);
-                            if (!permissionGranted) {
-                              // Планирование могло пройти без ошибок, но
-                              // Android всё равно не покажет уведомление,
-                              // если разрешение отключено — говорим об
-                              // этом прямо, а не пишем "сохранено".
-                              _showAppSnackBar(
-                                'Время сохранено, но уведомления выключены. Включите их вручную: Настройки телефона → Приложения → Я Коплю → Уведомления',
-                                isError: true,
-                              );
-                            } else if (scheduleError == null) {
-                              _showAppSnackBar('Напоминание сохранено');
-                            } else {
-                              // Показываем настоящую причину сбоя — на
-                              // установленном APK консоль недоступна, а
-                              // без этого пользователь не понимает, почему
-                              // уведомления не приходят.
-                              _showAppSnackBar('Не удалось запланировать: $scheduleError', isError: true);
-                            }
-                          }
-                        },
-                        child: const Text('Сохранить напоминание', style: TextStyle(fontWeight: FontWeight.bold)),
-                      ),
-                    ),
                     if (_devModeEnabled) ...[
                       const SizedBox(height: 20),
                       const Divider(),
@@ -2668,11 +2512,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           final displayValue = snapshot.connectionState == ConnectionState.waiting
                               ? '…'
                               : (count?.toString() ?? '—');
+                          // (5) Раньше этот пункт был залит сплошным фоном
+                          // (F7F2FA/1E1E1E), а остальные пункты режима
+                          // разработчика ("Добавить пожертвование" и т.д.) —
+                          // OutlinedButton с прозрачным фоном и обводкой.
+                          // Приводим к тому же стилю: прозрачный фон, рамка
+                          // цвета темы, та же высота 48, как у кнопок ниже.
                           return Container(
                             width: double.infinity,
-                            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                            height: 48,
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
                             decoration: BoxDecoration(
-                              color: appState.isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
+                              border: Border.all(color: appState.primaryColor),
                               borderRadius: BorderRadius.circular(16),
                             ),
                             child: Row(
@@ -2682,7 +2533,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   children: [
                                     Icon(Icons.download_rounded, size: 18, color: appState.primaryColor),
                                     const SizedBox(width: 8),
-                                    const Text('Скачиваний приложения', style: TextStyle(fontSize: 13)),
+                                    Text(
+                                      'Скачиваний приложения',
+                                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: appState.primaryColor),
+                                    ),
                                   ],
                                 ),
                                 Text(
@@ -2783,7 +2637,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             );
           },
-        );
+        ));
       },
     );
   }
@@ -2801,7 +2655,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
+        return _SwipeDownToClose(child: Padding(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom + 24,
             top: 24,
@@ -2853,7 +2707,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
@@ -2896,7 +2750,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return StatefulBuilder(
+        return _SwipeDownToClose(child: StatefulBuilder(
           builder: (context, setModalState) {
             return Padding(
               padding: EdgeInsets.only(
@@ -2938,7 +2792,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
+                    // (2) Между заголовком "Изменить цель ..." и полем
+                    // "Название цели" был слишком маленький отступ (4px) —
+                    // увеличен, чтобы окно не выглядело слипшимся.
+                    const SizedBox(height: 16),
                     TextField(
                       controller: titleController,
                       decoration: InputDecoration(
@@ -3158,7 +3015,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             );
           },
-        );
+        ));
       },
     );
   }
@@ -3179,7 +3036,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return Padding(
+        return _SwipeDownToClose(child: Padding(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom + 24,
             top: 24,
@@ -3226,7 +3083,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        );
+        ));
       },
     );
   }
