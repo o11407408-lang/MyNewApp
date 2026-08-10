@@ -11,6 +11,16 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+
+// Глобальный флаг "Отключить анимации" (настройки → тумблер рядом с тёмной
+// темой). Читается напрямую вспомогательными функциями/виджетами, у которых
+// нет удобного доступа к appState (переходы между экранами, точки-индикаторы
+// и т.д.), поэтому хранится как простая глобальная переменная, а не только
+// внутри _MyAppState. Источник истины по-прежнему appState.animationsDisabled
+// + SharedPreferences('animations_disabled') — эта переменная лишь кэширует
+// то же значение для быстрого доступа без BuildContext.
+bool kAnimationsDisabled = false;
+
 // (4) Push/локальные уведомления полностью убраны из приложения — они
 // так и не заработали надёжно, поэтому вместо очередной попытки чинить
 // весь блок кода и UI, связанный с напоминаниями, удалён.
@@ -176,6 +186,8 @@ void main() async {
   final savedLastName = prefs.getString('user_last_name') ?? '';
   final isDark = prefs.getBool('is_dark') ?? false;
   final colorIndex = prefs.getInt('color_index') ?? 0;
+  final animationsDisabled = prefs.getBool('animations_disabled') ?? false;
+  kAnimationsDisabled = animationsDisabled;
 
   runApp(MyApp(
     isRegistered: isRegistered,
@@ -183,6 +195,7 @@ void main() async {
     savedLastName: savedLastName,
     initialIsDark: isDark,
     initialColorIndex: colorIndex,
+    initialAnimationsDisabled: animationsDisabled,
   ));
 }
 
@@ -201,15 +214,59 @@ class _SwipeDownToClose extends StatefulWidget {
   State<_SwipeDownToClose> createState() => _SwipeDownToCloseState();
 }
 
-class _SwipeDownToCloseState extends State<_SwipeDownToClose> {
-  double _dragDistance = 0;
-  static const double _closeThreshold = 60;
+// (обновлено) Раньше окно закрывалось резко в момент пересечения порога,
+// не давая передумать. Теперь содержимое визуально "следует" за пальцем
+// (Transform.translate по drag-дистанции): тянешь вниз — окно едет вниз,
+// потянешь обратно вверх, не отпуская палец, — оно возвращается на место.
+// Решение принимается только в момент отпускания пальца: если утянуто
+// дальше порога — закрываем, иначе плавно пружиним обратно к нулю.
+class _SwipeDownToCloseState extends State<_SwipeDownToClose>
+    with SingleTickerProviderStateMixin {
+  double _dragExtent = 0;
+  static const double _closeThreshold = 120;
 
-  void _tryClose() {
-    if (!mounted) return;
-    if (Navigator.canPop(context)) {
-      _dragDistance = 0;
+  late final AnimationController _springController;
+  Animation<double>? _springAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _springController = AnimationController(
+      vsync: this,
+      duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 220),
+    );
+    _springController.addListener(() {
+      final anim = _springAnimation;
+      if (anim == null) return;
+      setState(() => _dragExtent = anim.value);
+    });
+  }
+
+  @override
+  void dispose() {
+    _springController.dispose();
+    super.dispose();
+  }
+
+  void _updateDrag(double delta) {
+    if (_springController.isAnimating) _springController.stop();
+    setState(() {
+      _dragExtent = (_dragExtent + delta).clamp(0.0, double.infinity);
+    });
+  }
+
+  void _springBackToZero() {
+    _springAnimation = Tween<double>(begin: _dragExtent, end: 0).animate(
+      CurvedAnimation(parent: _springController, curve: Curves.easeOutCubic),
+    );
+    _springController.forward(from: 0);
+  }
+
+  void _handleReleaseOrCancel() {
+    if (_dragExtent > _closeThreshold && mounted && Navigator.canPop(context)) {
       Navigator.pop(context);
+    } else {
+      _springBackToZero();
     }
   }
 
@@ -218,10 +275,7 @@ class _SwipeDownToCloseState extends State<_SwipeDownToClose> {
     return NotificationListener<OverscrollNotification>(
       onNotification: (notification) {
         if (notification.overscroll < 0) {
-          _dragDistance += -notification.overscroll;
-          if (_dragDistance > _closeThreshold) {
-            _tryClose();
-          }
+          _updateDrag(-notification.overscroll);
         }
         return false;
       },
@@ -229,18 +283,18 @@ class _SwipeDownToCloseState extends State<_SwipeDownToClose> {
         behavior: HitTestBehavior.translucent,
         onVerticalDragUpdate: (details) {
           final delta = details.primaryDelta;
-          if (delta != null && delta > 0) {
-            _dragDistance += delta;
-            if (_dragDistance > _closeThreshold) {
-              _tryClose();
-            }
-          } else {
-            _dragDistance = 0;
-          }
+          if (delta == null) return;
+          // Разрешаем и движение вниз, и обратное подтягивание вверх — оно
+          // просто ограничено снизу нулём (дальше исходного положения
+          // "вверх" содержимое не уезжает).
+          _updateDrag(delta);
         },
-        onVerticalDragEnd: (_) => _dragDistance = 0,
-        onVerticalDragCancel: () => _dragDistance = 0,
-        child: widget.child,
+        onVerticalDragEnd: (_) => _handleReleaseOrCancel(),
+        onVerticalDragCancel: () => _handleReleaseOrCancel(),
+        child: Transform.translate(
+          offset: Offset(0, _dragExtent),
+          child: widget.child,
+        ),
       ),
     );
   }
@@ -272,7 +326,10 @@ class _FlyingToastState extends State<_FlyingToast> with SingleTickerProviderSta
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 260));
+    _controller = AnimationController(
+      vsync: this,
+      duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 260),
+    );
     _offset = Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
         .animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
     _opacity = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
@@ -330,6 +387,7 @@ class MyApp extends StatefulWidget {
   final String savedLastName;
   final bool initialIsDark;
   final int initialColorIndex;
+  final bool initialAnimationsDisabled;
 
   const MyApp({
     super.key,
@@ -338,6 +396,7 @@ class MyApp extends StatefulWidget {
     required this.savedLastName,
     required this.initialIsDark,
     required this.initialColorIndex,
+    this.initialAnimationsDisabled = false,
   });
 
   static _MyAppState? of(BuildContext context) =>
@@ -353,6 +412,7 @@ class _MyAppState extends State<MyApp> {
   late String userName;
   late String userLastName;
   late bool isRegistered;
+  late bool animationsDisabled;
 
   // Убран один из двух одинаковых по смыслу голубых/синих оттенков —
   // осталось 5 цветов вместо 6.
@@ -380,6 +440,8 @@ class _MyAppState extends State<MyApp> {
     userName = widget.savedName;
     userLastName = widget.savedLastName;
     isRegistered = widget.isRegistered;
+    animationsDisabled = widget.initialAnimationsDisabled;
+    kAnimationsDisabled = animationsDisabled;
   }
 
   Color get primaryColor =>
@@ -391,6 +453,16 @@ class _MyAppState extends State<MyApp> {
     });
     SharedPreferences.getInstance().then((prefs) {
       prefs.setBool('is_dark', isDark);
+    });
+  }
+
+  void toggleAnimations(bool value) {
+    setState(() {
+      animationsDisabled = value;
+    });
+    kAnimationsDisabled = value;
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setBool('animations_disabled', animationsDisabled);
     });
   }
 
@@ -424,7 +496,9 @@ class _MyAppState extends State<MyApp> {
       userLastName = '';
       isDark = false;
       selectedColorIndex = 0;
+      animationsDisabled = false;
     });
+    kAnimationsDisabled = false;
   }
 
   @override
@@ -445,6 +519,15 @@ class _MyAppState extends State<MyApp> {
         Locale('en'),
       ],
       locale: const Locale('ru'),
+      builder: (context, child) {
+        // Сообщаем всему дереву (в т.ч. системным виджетам, которые сами
+        // проверяют MediaQuery.disableAnimations), что анимации выключены
+        // пользователем.
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(disableAnimations: animationsDisabled),
+          child: child!,
+        );
+      },
       theme: ThemeData(
         brightness: isDark ? Brightness.dark : Brightness.light,
         scaffoldBackgroundColor: isDark ? const Color(0xFF121212) : const Color(0xFFFBF8FF),
@@ -459,6 +542,17 @@ class _MyAppState extends State<MyApp> {
 }
 
 Route createAnimatedRoute(Widget page) {
+  // При включённом "Отключить анимации" переход происходит мгновенно, без
+  // fade/scale — но всё равно через PageRouteBuilder, чтобы поведение
+  // (например, жест "назад" на iOS) осталось прежним.
+  if (kAnimationsDisabled) {
+    return PageRouteBuilder(
+      pageBuilder: (context, animation, secondaryAnimation) => page,
+      transitionsBuilder: (context, animation, secondaryAnimation, child) => child,
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: Duration.zero,
+    );
+  }
   return PageRouteBuilder(
     pageBuilder: (context, animation, secondaryAnimation) => page,
     transitionsBuilder: (context, animation, secondaryAnimation, child) {
@@ -557,11 +651,43 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   children: [
                     const Text('Давай знакомиться', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                     const SizedBox(height: 12),
+                    // (6) До выбора цвета темы поля должны выглядеть нейтрально-
+                    // серыми — раньше рамка/лейбл уже были окрашены в цвет темы
+                    // "по умолчанию" (индекс 0 в appState), хотя пользователь
+                    // ещё ничего не выбирал. Используем canContinue (= цвет уже
+                    // выбран) как признак того, что можно красить в цвет темы.
                     TextField(
                       controller: _nameController,
                       decoration: InputDecoration(
                         labelText: 'Ваше имя *',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(
+                            color: canContinue
+                                ? _featureColor(appState, isDark)
+                                : (isDark ? Colors.grey[600]! : Colors.grey),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(
+                            color: canContinue
+                                ? _featureColor(appState, isDark)
+                                : (isDark ? Colors.grey[400]! : Colors.grey[700]!),
+                            width: 2,
+                          ),
+                        ),
+                        labelStyle: TextStyle(
+                          color: canContinue
+                              ? _featureColor(appState, isDark)
+                              : (isDark ? Colors.grey[400] : Colors.grey[600]),
+                        ),
+                        floatingLabelStyle: TextStyle(
+                          color: canContinue
+                              ? _featureColor(appState, isDark)
+                              : (isDark ? Colors.grey[400] : Colors.grey[600]),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -570,6 +696,33 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       decoration: InputDecoration(
                         labelText: 'Фамилия (необязательно)',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(
+                            color: canContinue
+                                ? _featureColor(appState, isDark)
+                                : (isDark ? Colors.grey[600]! : Colors.grey),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(
+                            color: canContinue
+                                ? _featureColor(appState, isDark)
+                                : (isDark ? Colors.grey[400]! : Colors.grey[700]!),
+                            width: 2,
+                          ),
+                        ),
+                        labelStyle: TextStyle(
+                          color: canContinue
+                              ? _featureColor(appState, isDark)
+                              : (isDark ? Colors.grey[400] : Colors.grey[600]),
+                        ),
+                        floatingLabelStyle: TextStyle(
+                          color: canContinue
+                              ? _featureColor(appState, isDark)
+                              : (isDark ? Colors.grey[400] : Colors.grey[600]),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -1098,7 +1251,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (_pageController.hasClients) {
       _pageController.animateToPage(
         newIndex,
-        duration: const Duration(milliseconds: 300),
+        duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 300),
         curve: Curves.easeInOut,
       );
     }
@@ -2417,7 +2570,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                     const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Icon(Icons.tune_rounded, size: 16, color: appState.primaryColor),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Внешний вид',
+                          style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('Тёмная тема'),
@@ -2425,6 +2589,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       onChanged: (val) {
                         appState.toggleTheme(val);
                         Navigator.pop(context);
+                      },
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Отключить анимации'),
+                      subtitle: const Text(
+                        'Переходы и эффекты станут мгновенными',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      value: appState.animationsDisabled,
+                      onChanged: (val) {
+                        appState.toggleAnimations(val);
                       },
                     ),
                     const SizedBox(height: 20),
@@ -2449,7 +2625,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        Icon(Icons.bolt_rounded, size: 16, color: appState.primaryColor),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Действия',
+                          style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
                       height: 48,
@@ -2629,6 +2816,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         label: const Text('Сбросить все настройки', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ),
+                    const SizedBox(height: 20),
+                    Center(
+                      child: Text(
+                        'Проект частично сгенерирован искусственным интеллектом.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
                     ],
                   ),
                 ),
@@ -3391,7 +3591,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     HapticFeedback.selectionClick();
                     _pageController.animateToPage(
                       index,
-                      duration: const Duration(milliseconds: 300),
+                      duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 300),
                       curve: Curves.easeInOut,
                     );
                   },
@@ -3400,7 +3600,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     // сам визуальный размер точки не меняется.
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 250),
+                      duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 250),
                       curve: Curves.easeInOut,
                       margin: const EdgeInsets.symmetric(horizontal: 4),
                       width: currentGoalIndex == index ? 16 : 8,
@@ -3498,7 +3698,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               // AnimatedSize — плавно меняет высоту блока и при увеличении, и
               // при уменьшении истории (например, после свайп-удаления записи).
               AnimatedSize(
-                duration: const Duration(milliseconds: 250),
+                duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 250),
                 curve: Curves.easeInOut,
                 alignment: Alignment.topCenter,
                 child: Container(
