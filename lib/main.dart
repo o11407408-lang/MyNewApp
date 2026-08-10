@@ -183,6 +183,24 @@ Future<String?> _scheduleReminderNotification({
   }
 }
 
+// (7) Быстрая проверка реального соединения с интернетом через
+// принудительное серверное обращение к Firestore (без локального кэша).
+// Используется там, где "пустой" список Firestore-стрима иначе не
+// отличить от "нет сети": в обоих случаях снапшот приходит с 0
+// документов, а пользователю нужно понимать разницу.
+Future<bool> _hasInternetConnection() async {
+  try {
+    await FirebaseFirestore.instance
+        .collection('app_stats')
+        .doc('downloads')
+        .get(const GetOptions(source: Source.server))
+        .timeout(const Duration(seconds: 6));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 // --- Счётчик уникальных установок приложения (через Firestore) ---
 // Идентификатор устройства (Android ID / iOS identifierForVendor)
 // используется как ключ документа, поэтому повторная установка на то
@@ -901,6 +919,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final PageController _pageController = PageController();
 
   int _nameTapCount = 0;
+  // (1) Защита от повторного открытия окна ввода кода разработчика поверх
+  // уже открытого — без этого 10 тапов по имени во время открытого окна
+  // открывали ещё одно поверх первого.
+  bool _devCodeModalOpen = false;
   bool _devModeEnabled = false;
 
   // История достигнутых/удалённых целей ("История желаний" в настройках)
@@ -1393,8 +1415,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     }
                     final docs = snapshot.data?.docs.toList() ?? [];
                     if (docs.isEmpty) {
-                      return const Center(
-                        child: Text('Пока нет пожертвований', style: TextStyle(color: Colors.grey)),
+                      // (7) "Пустой список" от Firestore при отсутствии
+                      // интернета выглядит так же, как реально пустой
+                      // список — проверяем реальное соединение отдельно,
+                      // чтобы не вводить в заблуждение.
+                      return FutureBuilder<bool>(
+                        future: _hasInternetConnection(),
+                        builder: (context, connSnapshot) {
+                          if (connSnapshot.connectionState == ConnectionState.waiting) {
+                            return const Center(child: CircularProgressIndicator());
+                          }
+                          if (connSnapshot.data == false) {
+                            return const Center(
+                              child: Text(
+                                'Нет соединения с интернетом',
+                                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                              ),
+                            );
+                          }
+                          return const Center(
+                            child: Text('Пока нет пожертвований', style: TextStyle(color: Colors.grey)),
+                          );
+                        },
                       );
                     }
                     // Сортировка: сумма по убыванию, при равенстве — имя А-Я
@@ -1711,6 +1753,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // без опечаток). Для всех остальных имён тапы никакого эффекта не имеют.
   void _handleNameTap() {
     if (widget.userName != 'Марат') return;
+    if (_devCodeModalOpen) return;
     _nameTapCount++;
     if (_nameTapCount >= 10) {
       _nameTapCount = 0;
@@ -1793,6 +1836,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // (10) Модалка ввода кода теперь не закрывается случайно от лишнего тапа:
   // isDismissible/enableDrag выключены, выйти можно только через крестик.
   void _showDevCodeModal() async {
+    if (_devCodeModalOpen) return;
+    _devCodeModalOpen = true;
     final codeController = TextEditingController();
     bool showWrongCodeError = false;
     String? errorMessage;
@@ -1803,7 +1848,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       showWrongCodeError = true;
       errorMessage = 'Слишком много попыток. Попробуйте через ${_formatLockoutDuration(existingLockout)}';
     }
-    if (!mounted) return;
+    if (!mounted) {
+      _devCodeModalOpen = false;
+      return;
+    }
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1944,7 +1992,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           },
         );
       },
-    );
+    ).then((_) {
+      // Окно закрылось (любым способом) — снова разрешаем открыть его.
+      _devCodeModalOpen = false;
+    });
   }
 
   Future<void> _enableDevMode() async {
@@ -2160,7 +2211,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     }
                     final docs = snapshot.data?.docs ?? [];
                     if (docs.isEmpty) {
-                      return const Center(child: Text('Сообщений пока нет', style: TextStyle(color: Colors.grey)));
+                      // (7) Та же проверка: не путаем "сообщений пока нет"
+                      // с "нет интернета".
+                      return FutureBuilder<bool>(
+                        future: _hasInternetConnection(),
+                        builder: (context, connSnapshot) {
+                          if (connSnapshot.connectionState == ConnectionState.waiting) {
+                            return const Center(child: CircularProgressIndicator());
+                          }
+                          if (connSnapshot.data == false) {
+                            return const Center(
+                              child: Text(
+                                'Нет соединения с интернетом',
+                                style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                              ),
+                            );
+                          }
+                          return const Center(child: Text('Сообщений пока нет', style: TextStyle(color: Colors.grey)));
+                        },
+                      );
                     }
                     return ListView.separated(
                       itemCount: docs.length,
@@ -2296,6 +2365,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final reminderTextController = TextEditingController(
       text: prefs.getString('reminder_text') ?? 'Пополни копилку!',
     );
+    // (1) Затухание внизу списка теперь отслеживает прокрутку: как только
+    // пользователь долистал до самого конца — прятать нечего, и градиент
+    // отключается полностью (без него список выглядит просто обрезанным
+    // по нижнему краю окна, а не "выцветшим").
+    final settingsScrollController = ScrollController();
+    bool showBottomFade = true;
     if (!mounted) return;
     showModalBottomSheet(
       context: context,
@@ -2326,24 +2401,48 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
                 // (1) Раньше последняя строка списка обрезалась резкой
                 // линией по краю окна. ShaderMask плавно "растворяет"
-                // нижние ~10% высоты в прозрачность — простой блюр-переход
-                // вместо жёсткого обрезания, который заодно подсказывает,
-                // что список можно прокрутить дальше.
-                child: ShaderMask(
-                  shaderCallback: (rect) {
-                    return const LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.black, Colors.black, Colors.transparent],
-                      stops: [0.0, 0.9, 1.0],
-                    ).createShader(rect);
+                // последние ~18px в прозрачность — короткий, ненавязчивый
+                // переход (а не треть окна), и полностью выключается, когда
+                // список докручен до конца (см. NotificationListener ниже).
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    final metrics = notification.metrics;
+                    final atBottom = metrics.maxScrollExtent <= 0 ||
+                        metrics.pixels >= metrics.maxScrollExtent - 2;
+                    if (atBottom == showBottomFade) {
+                      setModalState(() => showBottomFade = !atBottom);
+                    }
+                    return false;
                   },
-                  blendMode: BlendMode.dstIn,
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                  child: ShaderMask(
+                    shaderCallback: (rect) {
+                      if (!showBottomFade) {
+                        // Докручено до конца — градиент полностью
+                        // непрозрачный, эффект затухания не виден.
+                        return const LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Colors.black, Colors.black],
+                        ).createShader(rect);
+                      }
+                      // Совсем небольшое затухание — раньше 18px тоже
+                      // казалось многовато, теперь всего 8px.
+                      const fadeHeight = 8.0;
+                      final fadeStart = (1 - (fadeHeight / rect.height)).clamp(0.0, 1.0);
+                      return LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: const [Colors.black, Colors.black, Colors.transparent],
+                        stops: [0.0, fadeStart, 1.0],
+                      ).createShader(rect);
+                    },
+                    blendMode: BlendMode.dstIn,
+                    child: SingleChildScrollView(
+                      controller: settingsScrollController,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                     const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 16),
                     SwitchListTile(
@@ -2680,6 +2779,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                 ),
                 ),
+                ),
               ),
             );
           },
@@ -2821,19 +2921,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                           ),
                         ),
-                        // (1)/(8) Кнопка «Информация о цели» — в правом
-                        // верхнем углу, выровнена по правому краю поля
-                        // «Название цели» ниже (padding: zero убирает
-                        // стандартный отступ IconButton, который иначе
-                        // сдвигал бы иконку левее границы поля).
-                        IconButton(
-                          onPressed: () => _showGoalInfoModal(goal),
-                          icon: Icon(Icons.info_outline_rounded, color: appState.primaryColor, size: 22),
-                          tooltip: 'Информация о цели',
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                          alignment: Alignment.centerRight,
+                        // (3) Убрал IconButton совсем: у Material-кнопки
+                        // внутри всегда зарезервирован "холст" под тап-зону
+                        // и ripple, из-за чего сама иконка почти никогда не
+                        // лежит точно по краю бокса, сколько её ни двигай.
+                        // GestureDetector + Icon рисует иконку ровно в
+                        // границах своего size — она физически совпадает с
+                        // правым краем поля «Название цели» ниже.
+                        GestureDetector(
+                          onTap: () => _showGoalInfoModal(goal),
+                          behavior: HitTestBehavior.opaque,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 8, bottom: 2),
+                            child: Icon(Icons.info_outline_rounded, color: appState.primaryColor, size: 24),
+                          ),
                         ),
                       ],
                     ),
@@ -3271,6 +3372,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 controller: _pageController,
                 itemCount: goals.length + 1,
                 onPageChanged: (index) {
+                  // (6) Вибро-отклик при смене цели — и при свайпе, и при
+                  // переключении тапом по точке (см. ниже), так как оба
+                  // способа приводят сюда же.
+                  HapticFeedback.selectionClick();
                   setState(() {
                     currentGoalIndex = index;
                   });
@@ -3415,17 +3520,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ),
             const SizedBox(height: 10),
-            // Индикатор точек для свайпа целей (включая слайд добавления)
+            // (4)/(6) Индикатор точек для свайпа целей (включая слайд
+            // добавления) — теперь ещё и кликабелен (тап по точке сразу
+            // переключает на неё), а сама смена ширины/цвета анимирована
+            // (AnimatedContainer), из-за чего активная точка визуально
+            // "перетекает" в соседнюю, а не переключается скачком.
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: List.generate(goals.length + 1, (index) {
-                return Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 4),
-                  width: currentGoalIndex == index ? 16 : 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: currentGoalIndex == index ? appState.primaryColor : Colors.grey.withOpacity(0.4),
-                    borderRadius: BorderRadius.circular(4),
+                return GestureDetector(
+                  onTap: () {
+                    if (index == currentGoalIndex) return;
+                    HapticFeedback.selectionClick();
+                    _pageController.animateToPage(
+                      index,
+                      duration: const Duration(milliseconds: 300),
+                      curve: Curves.easeInOut,
+                    );
+                  },
+                  child: Padding(
+                    // Увеличенная зона нажатия вокруг маленькой точки —
+                    // сам визуальный размер точки не меняется.
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeInOut,
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      width: currentGoalIndex == index ? 16 : 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: currentGoalIndex == index ? appState.primaryColor : Colors.grey.withOpacity(0.4),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
                   ),
                 );
               }),
