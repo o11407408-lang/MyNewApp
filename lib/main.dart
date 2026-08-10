@@ -272,6 +272,16 @@ class _SwipeDownToCloseState extends State<_SwipeDownToClose>
 
   @override
   Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    // (5) Раньше подложку (затемнение фона) рисовал системный barrierColor —
+    // он статичен и не связан с нашим драгом. Теперь barrierColor у самого
+    // showModalBottomSheet прозрачный, а подложку рисуем сами прямо здесь,
+    // привязанную к _dragExtent: она плавно и пропорционально светлеет по
+    // мере того, как утягиваешь окно вниз, без резких скачков, и точно так
+    // же плавно возвращается к исходной непрозрачности при отпускании до
+    // порога или обратном движении вверх.
+    final dragProgress = (_dragExtent / (screenHeight * 0.6)).clamp(0.0, 1.0);
+    final barrierOpacity = 0.55 * (1 - dragProgress);
     return NotificationListener<OverscrollNotification>(
       onNotification: (notification) {
         if (notification.overscroll < 0) {
@@ -291,9 +301,32 @@ class _SwipeDownToCloseState extends State<_SwipeDownToClose>
         },
         onVerticalDragEnd: (_) => _handleReleaseOrCancel(),
         onVerticalDragCancel: () => _handleReleaseOrCancel(),
-        child: Transform.translate(
-          offset: Offset(0, _dragExtent),
-          child: widget.child,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: IgnorePointer(
+                // OverflowBox позволяет собственной подложке залезть выше
+                // границ карточки модалки и перекрыть весь экран, а не
+                // только видимую высоту самого листа.
+                child: OverflowBox(
+                  maxHeight: screenHeight,
+                  alignment: Alignment.bottomCenter,
+                  child: Container(
+                    height: screenHeight,
+                    color: Colors.black.withOpacity(barrierOpacity),
+                  ),
+                ),
+              ),
+            ),
+            Transform.translate(
+              offset: Offset(0, _dragExtent),
+              child: widget.child,
+            ),
+          ],
         ),
       ),
     );
@@ -658,6 +691,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     // выбран) как признак того, что можно красить в цвет темы.
                     TextField(
                       controller: _nameController,
+                      // (1) cursorColor не был задан явно — курсор брал
+                      // цвет темы приложения "по умолчанию" из глобального
+                      // Theme (обычно тёмно-красный/коричневый), даже когда
+                      // рамка и лейбл уже правильно были серыми до выбора.
+                      cursorColor: canContinue
+                          ? _featureColor(appState, isDark)
+                          : (isDark ? Colors.grey[400] : Colors.grey[600]),
                       decoration: InputDecoration(
                         labelText: 'Ваше имя *',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
@@ -693,6 +733,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: _lastNameController,
+                      cursorColor: canContinue
+                          ? _featureColor(appState, isDark)
+                          : (isDark ? Colors.grey[400] : Colors.grey[600]),
                       decoration: InputDecoration(
                         labelText: 'Фамилия (необязательно)',
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
@@ -1233,7 +1276,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await prefs.setStringList('wish_history', raw);
   }
 
+  // (3) Максимум 10 целей одновременно — после достижения лимита кнопка
+  // (слайд) добавления новой цели скрывается.
+  static const int _maxGoals = 10;
+  bool get _canAddMoreGoals => goals.length < _maxGoals;
+
   Future<void> _addNewGoal() async {
+    if (!_canAddMoreGoals) return;
     final newIndex = goals.length;
     final newGoal = GoalData(
       currentAmount: 0,
@@ -1391,9 +1440,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _saveGoalData(currentGoalIndex);
   }
 
-  // (5)+(6) Удаление цели: если она была достигнута — сохраняем её в
-  // "Историю желаний", саму цель не удаляем из списка, а сбрасываем к
-  // стандартным значениям (название, фото, сумма, карманные).
+  // (2) Первую и вторую цель (index 0 и 1) теперь можно только СБРОСИТЬ —
+  // сам слот остаётся в списке. Третью и последующие цели (index >= 2)
+  // можно удалить полностью — слот убирается из списка, а данные всех
+  // целей после неё сдвигаются на одну позицию вниз, чтобы не оставалось
+  // "дыр" в хранилище SharedPreferences.
+  //
+  // Если цель была достигнута — в обоих случаях сохраняем её в "Историю
+  // желаний" перед сбросом/удалением.
+  bool _isResetOnlyGoal(int index) => index < 2;
+
+  Future<void> _removeGoalPrefsAt(SharedPreferences prefs, int index) async {
+    await prefs.remove('current_amount_$index');
+    await prefs.remove('target_amount_$index');
+    await prefs.remove('goal_title_$index');
+    await prefs.remove('history_list_$index');
+    await prefs.remove('goal_image_path_$index');
+    await prefs.remove('daily_allowance_$index');
+    await prefs.remove('allowance_period_$index');
+    await prefs.remove('last_allowance_credit_$index');
+    await prefs.remove('goal_currency_$index');
+    await prefs.remove('target_date_$index');
+  }
+
   Future<void> _deleteGoal(int index) async {
     final goal = goals[index];
     final wasAchieved = goal.targetAmount > 0 && goal.currentAmount >= goal.targetAmount;
@@ -1407,24 +1476,52 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await _saveWishHistory();
     }
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('goal_image_path_$index');
-    await prefs.remove('daily_allowance_$index');
-    await prefs.remove('allowance_period_$index');
-    await prefs.remove('last_allowance_credit_$index');
-    await prefs.remove('target_date_$index');
+
+    if (_isResetOnlyGoal(index)) {
+      // Первая/вторая цель — только сброс к стандартным значениям, слот
+      // остаётся на своём месте.
+      await prefs.remove('goal_image_path_$index');
+      await prefs.remove('daily_allowance_$index');
+      await prefs.remove('allowance_period_$index');
+      await prefs.remove('last_allowance_credit_$index');
+      await prefs.remove('target_date_$index');
+      setState(() {
+        goals[index].goalTitle = _ordinalGoalName(index + 1);
+        goals[index].targetAmount = 0;
+        goals[index].currentAmount = 0;
+        goals[index].imagePath = null;
+        goals[index].dailyAllowance = null;
+        goals[index].allowancePeriod = 'day';
+        goals[index].targetDate = null;
+        goals[index].currency = '₽';
+        goals[index].history = [];
+      });
+      await _saveGoalData(index);
+      _showAppSnackBar(wasAchieved ? 'Цель удалена и сохранена в истории желаний' : 'Цель сброшена');
+      return;
+    }
+
+    // Третья и последующие цели — удаляются полностью из списка.
+    final oldLength = goals.length;
     setState(() {
-      goals[index].goalTitle = _ordinalGoalName(index + 1);
-      goals[index].targetAmount = 0;
-      goals[index].currentAmount = 0;
-      goals[index].imagePath = null;
-      goals[index].dailyAllowance = null;
-      goals[index].allowancePeriod = 'day';
-      goals[index].targetDate = null;
-      goals[index].currency = '₽';
-      goals[index].history = [];
+      goals.removeAt(index);
+      if (currentGoalIndex >= goals.length) {
+        currentGoalIndex = goals.length - 1 < 0 ? 0 : goals.length - 1;
+      }
     });
-    await _saveGoalData(index);
-    _showAppSnackBar(wasAchieved ? 'Цель удалена и сохранена в истории желаний' : 'Цель сброшена');
+    // Сдвигаем сохранённые данные всех целей, шедших после удалённой,
+    // на одну позицию вниз (иначе они "потеряются" за неверными ключами).
+    for (int i = index; i < oldLength - 1; i++) {
+      await _removeGoalPrefsAt(prefs, i);
+      await _saveGoalData(i);
+    }
+    // Больше нет цели с последним (теперь лишним) индексом — чистим её данные.
+    await _removeGoalPrefsAt(prefs, oldLength - 1);
+    await prefs.setInt('goals_count', goals.length);
+    if (_pageController.hasClients) {
+      _pageController.jumpToPage(currentGoalIndex);
+    }
+    _showAppSnackBar(wasAchieved ? 'Цель удалена и сохранена в истории желаний' : 'Цель удалена');
   }
 
   // (3) Единый стиль коротких уведомлений — закруглённые, в цвет темы,
@@ -1457,6 +1554,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _showComingSoonBottomSheet(String title, String description) {
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -1504,6 +1602,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _showLeaderboardModal() {
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -1525,7 +1624,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               Text('Пожертвования', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
               const SizedBox(height: 8),
               const Text(
-                'Сравните',
+                'Сравните накопления и достижения других пользователей!',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 13, color: Colors.grey),
               ),
@@ -1643,6 +1742,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _confirmDeleteDonation(String docId) {
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -1710,6 +1810,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _confirmDeleteMessage(String docId) {
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -1776,6 +1877,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _showSupportModal() {
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -1843,6 +1945,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _showSetPriceFirstModal() {
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -1908,7 +2011,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       final docRef = await _devCodeLockoutDocRef();
       if (docRef == null) return null;
-      final snap = await docRef.get();
+      // (7) Читаем только из локального кэша, без похода в сеть: обычный
+      // .get() без интернета (особенно если кэша ещё не было) мог бы
+      // подолгу ждать ответа сервера и блокировать вход по верному коду.
+      // Если кэша нет — Source.cache бросит исключение, которое ниже
+      // трактуется как "блокировки нет", так что офлайн-вход не страдает.
+      final snap = await docRef
+          .get(const GetOptions(source: Source.cache))
+          .timeout(const Duration(seconds: 2));
       final lockoutUntilMs = (snap.data()?['lockout_until_ms'] as num?)?.toInt() ?? 0;
       final remainingMs = lockoutUntilMs - DateTime.now().millisecondsSinceEpoch;
       if (remainingMs <= 0) return null;
@@ -1937,7 +2047,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         }
         transaction.set(docRef, update, SetOptions(merge: true));
         return lockout;
-      });
+      }).timeout(const Duration(seconds: 4));
     } catch (e) {
       // ignore: avoid_print
       print('Не удалось зафиксировать неверную попытку кода разработчика: $e');
@@ -1949,7 +2059,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       final docRef = await _devCodeLockoutDocRef();
       if (docRef == null) return;
-      await docRef.set({'fail_count': 0, 'lockout_until_ms': 0});
+      // (7) У Firestore .set() Future не завершается, пока запись не
+      // подтвердит сервер — без интернета это могло надолго "подвесить"
+      // вход по верному коду прямо на этом месте. Таймаут гарантирует, что
+      // мы не ждём бесконечно: запись всё равно останется в локальной
+      // очереди и уйдёт на сервер, когда соединение появится.
+      await docRef
+          .set({'fail_count': 0, 'lockout_until_ms': 0})
+          .timeout(const Duration(seconds: 2));
     } catch (e) {
       // ignore: avoid_print
       print('Не удалось сбросить счётчик кода разработчика: $e');
@@ -1987,6 +2104,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       isScrollControlled: true,
       isDismissible: false,
       enableDrag: false,
@@ -2157,6 +2275,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final donorAmountController = TextEditingController();
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -2236,6 +2355,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final messageController = TextEditingController();
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -2313,6 +2433,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _showDeveloperMessagesModal() {
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -2421,6 +2542,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _showWishHistoryModal() {
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -2500,6 +2622,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -2523,6 +2646,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               // доступно прокруткой внутри (SingleChildScrollView ниже).
               child: ConstrainedBox(
                 constraints: BoxConstraints(
+                  // (4) Раньше указывался только maxHeight — лист сам
+                  // сжимался под объём контента, и без «Режима разработчика»
+                  // (меньше пунктов) верхний край листа с «Настройки»
+                  // оказывался ниже, чем с включённым режимом. Отступы от
+                  // этого визуально «скакали». Фиксируем minHeight == maxHeight,
+                  // чтобы высота (и верхний отступ) листа была одинаковой
+                  // независимо от количества пунктов внутри.
+                  minHeight: MediaQuery.of(context).size.height * 0.75,
                   maxHeight: MediaQuery.of(context).size.height * 0.75,
                 ),
                 // (1) Раньше последняя строка списка обрезалась резкой
@@ -2585,10 +2716,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('Тёмная тема'),
+                      subtitle: const Text(
+                        'Использовать тёмную палитру интерфейса',
+                        style: TextStyle(fontSize: 12),
+                      ),
                       value: appState.isDark,
                       onChanged: (val) {
                         appState.toggleTheme(val);
-                        Navigator.pop(context);
                       },
                     ),
                     SwitchListTile(
@@ -2612,8 +2746,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         appState.lightColors.length,
                         (index) => GestureDetector(
                           onTap: () {
+                            // (4) Раньше выбор цвета сразу закрывал окно
+                            // настроек — теперь можно спокойно перебрать
+                            // несколько цветов подряд и закрыть вручную.
                             appState.setColor(index);
-                            Navigator.pop(context);
+                            setModalState(() {});
                           },
                           child: CircleAvatar(
                             radius: 18,
@@ -2849,6 +2986,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final remaining = goal.targetAmount - goal.currentAmount;
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -2944,6 +3082,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -3168,48 +3307,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                       ),
                     ),
-                    // (5) Удаление цели — сбрасывает название/сумму/фото,
-                    // саму цель (её слот) не удаляет полностью.
+                    // (2) Первую/вторую цель можно только сбросить (слот
+                    // остаётся), третью и последующие — удалить полностью.
                     const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.red,
-                          side: const BorderSide(color: Colors.red),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        ),
-                        onPressed: () {
-                          showDialog(
-                            context: context,
-                            builder: (dialogContext) => AlertDialog(
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                              title: const Text('Удалить цель?'),
-                              content: const Text(
-                                'Название, сумма и фото сбросятся к стандартным. Если цель была достигнута, она сохранится в «Истории желаний».',
+                    Builder(builder: (context) {
+                      final bool resetOnly = _isResetOnlyGoal(currentGoalIndex);
+                      return SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.red,
+                            side: const BorderSide(color: Colors.red),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          ),
+                          onPressed: () {
+                            showDialog(
+                              context: context,
+                              builder: (dialogContext) => AlertDialog(
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                title: Text(resetOnly ? 'Сбросить цель?' : 'Удалить цель?'),
+                                content: Text(
+                                  resetOnly
+                                      ? 'Название, сумма и фото сбросятся к стандартным. Если цель была достигнута, она сохранится в «Истории желаний».'
+                                      : 'Цель будет полностью удалена из списка. Если она была достигнута, она сохранится в «Истории желаний».',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(dialogContext),
+                                    child: const Text('Отмена'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () {
+                                      Navigator.pop(dialogContext);
+                                      Navigator.pop(context);
+                                      _deleteGoal(currentGoalIndex);
+                                    },
+                                    child: Text(resetOnly ? 'Сбросить' : 'Удалить', style: const TextStyle(color: Colors.red)),
+                                  ),
+                                ],
                               ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () => Navigator.pop(dialogContext),
-                                  child: const Text('Отмена'),
-                                ),
-                                TextButton(
-                                  onPressed: () {
-                                    Navigator.pop(dialogContext);
-                                    Navigator.pop(context);
-                                    _deleteGoal(currentGoalIndex);
-                                  },
-                                  child: const Text('Удалить', style: TextStyle(color: Colors.red)),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.delete_outline),
-                        label: const Text('Удалить цель', style: TextStyle(fontWeight: FontWeight.bold)),
-                      ),
-                    ),
+                            );
+                          },
+                          icon: Icon(resetOnly ? Icons.restart_alt_rounded : Icons.delete_outline),
+                          label: Text(resetOnly ? 'Сбросить цель' : 'Удалить цель', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      );
+                    }),
                   ],
                 ),
               ),
@@ -3230,6 +3374,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final controller = TextEditingController();
     showModalBottomSheet(
       context: context,
+      barrierColor: Colors.transparent,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -3427,7 +3572,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               height: 300,
               child: PageView.builder(
                 controller: _pageController,
-                itemCount: goals.length + 1,
+                // (3) Слайд «Добавить цель» показываем только пока не
+                // достигнут лимит в _maxGoals целей.
+                itemCount: goals.length + (_canAddMoreGoals ? 1 : 0),
                 onPageChanged: (index) {
                   // (6) Вибро-отклик при смене цели — и при свайпе, и при
                   // переключении тапом по точке (см. ниже), так как оба
@@ -3584,7 +3731,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             // "перетекает" в соседнюю, а не переключается скачком.
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(goals.length + 1, (index) {
+              children: List.generate(goals.length + (_canAddMoreGoals ? 1 : 0), (index) {
                 return GestureDetector(
                   onTap: () {
                     if (index == currentGoalIndex) return;
@@ -3616,7 +3763,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 16),
 
-            if (!onAddSlide) ...[
+            // (1) Плавный переход между экраном цели и слайдом «Добавить
+            // цель»: AnimatedSize анимирует изменение высоты блока, а
+            // AnimatedSwitcher — плавно перекрещивает (fade) содержимое,
+            // поэтому нижние пункты (карточки поддержки и т.д.) не
+            // «прыгают» резко, а плавно сдвигаются на новое место.
+            AnimatedSize(
+              duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              alignment: Alignment.topCenter,
+              child: AnimatedSwitcher(
+                duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 300),
+                switchInCurve: Curves.easeInOut,
+                switchOutCurve: Curves.easeInOut,
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity: animation,
+                  child: child,
+                ),
+                child: !onAddSlide
+                    ? Column(
+                        key: const ValueKey('goal_slide_content'),
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
               Row(
                 children: [
                   Expanded(
@@ -3760,15 +3929,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
 
               const SizedBox(height: 24),
-            ] else ...[
-              Center(
-                child: Text(
-                  'Нажмите «+», чтобы добавить новую цель',
-                  style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                ),
+                        ],
+                      )
+                    : Column(
+                        key: const ValueKey('add_slide_content'),
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 32),
+                          Center(
+                            child: Text(
+                              'Нажмите «+», чтобы добавить новую цель',
+                              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                        ],
+                      ),
               ),
-              const SizedBox(height: 24),
-            ],
+            ),
 
             // Карточка «Поддержать проект»
             Container(
