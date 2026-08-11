@@ -199,29 +199,66 @@ void main() async {
   ));
 }
 
-// (1) Свайп вниз закрывает любое всплывающее окно (настройки, вход в режим
-// разработчика, таблица лидеров и т.д.) — даже когда палец находится не над
-// "ручкой", а прямо над содержимым, и даже если внутри окна прокручиваемый
-// список уже докручен доверху. Для обычного контента ловим вертикальный
-// драг напрямую; для прокручиваемых списков (SingleChildScrollView/ListView)
-// в момент, когда дальше скроллить некуда, дополнительное движение вниз
-// приходит как OverscrollNotification — его тоже засчитываем.
-class _SwipeDownToClose extends StatefulWidget {
-  final Widget child;
-  const _SwipeDownToClose({required this.child});
-
-  @override
-  State<_SwipeDownToClose> createState() => _SwipeDownToCloseState();
+// (7) Единый способ показать всплывающее модальное окно снизу экрана.
+// Раньше почти каждый вызов использовал системный showModalBottomSheet с
+// прозрачным barrierColor и пытался нарисовать подложку (затемнение фона)
+// сам, изнутри тела окна, через OverflowBox поверх его собственных границ.
+// На экранах, где окно не растягивалось на весь экран (например, "Изменить
+// цель"), этот трюк не работал и фон за окном оставался незатемнённым.
+// Теперь показ идёт через showGeneralDialog: подложка — обычный
+// полноэкранный виджет на уровне самого диалога (а не внутри тела окна),
+// поэтому затемнение гарантированно видно позади ЛЮБОГО модального окна —
+// настроек, таблицы лидеров, доната, информации о цели и т.д. При этом
+// сохранено и усилено прежнее поведение свайпа: окно в реальном времени
+// плавно следует за пальцем и вниз, и обратно вверх (можно передумать и
+// вернуть окно на место), а прозрачность подложки меняется плавно и
+// пропорционально — как во время открытия/закрытия окна, так и во время
+// самого свайпа, без единого резкого скачка.
+Future<T?> _showAppModal<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  bool isDismissible = true,
+  bool enableDrag = true,
+}) {
+  return showGeneralDialog<T>(
+    context: context,
+    barrierColor: Colors.transparent,
+    barrierDismissible: isDismissible,
+    barrierLabel: 'Закрыть',
+    transitionDuration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 260),
+    pageBuilder: (context, animation, secondaryAnimation) {
+      return _AppModalSheet(
+        animation: animation,
+        isDismissible: isDismissible,
+        enableDrag: enableDrag,
+        builder: builder,
+      );
+    },
+    // Свою собственную анимацию появления/затемнения строим ниже через
+    // AnimatedBuilder по тому же animation, поэтому системный transition
+    // (который иначе завернул бы всё ещё и в FadeTransition) отключаем.
+    transitionBuilder: (context, animation, secondaryAnimation, child) => child,
+  );
 }
 
-// (обновлено) Раньше окно закрывалось резко в момент пересечения порога,
-// не давая передумать. Теперь содержимое визуально "следует" за пальцем
-// (Transform.translate по drag-дистанции): тянешь вниз — окно едет вниз,
-// потянешь обратно вверх, не отпуская палец, — оно возвращается на место.
-// Решение принимается только в момент отпускания пальца: если утянуто
-// дальше порога — закрываем, иначе плавно пружиним обратно к нулю.
-class _SwipeDownToCloseState extends State<_SwipeDownToClose>
-    with SingleTickerProviderStateMixin {
+class _AppModalSheet extends StatefulWidget {
+  final Animation<double> animation;
+  final bool isDismissible;
+  final bool enableDrag;
+  final WidgetBuilder builder;
+
+  const _AppModalSheet({
+    required this.animation,
+    required this.isDismissible,
+    required this.enableDrag,
+    required this.builder,
+  });
+
+  @override
+  State<_AppModalSheet> createState() => _AppModalSheetState();
+}
+
+class _AppModalSheetState extends State<_AppModalSheet> with SingleTickerProviderStateMixin {
   double _dragExtent = 0;
   static const double _closeThreshold = 120;
 
@@ -270,68 +307,85 @@ class _SwipeDownToCloseState extends State<_SwipeDownToClose>
     }
   }
 
+  void _handleBarrierTap() {
+    if (widget.isDismissible && Navigator.canPop(context)) {
+      Navigator.pop(context);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
-    // (5) Раньше подложку (затемнение фона) рисовал системный barrierColor —
-    // он статичен и не связан с нашим драгом. Теперь barrierColor у самого
-    // showModalBottomSheet прозрачный, а подложку рисуем сами прямо здесь,
-    // привязанную к _dragExtent: она плавно и пропорционально светлеет по
-    // мере того, как утягиваешь окно вниз, без резких скачков, и точно так
-    // же плавно возвращается к исходной непрозрачности при отпускании до
-    // порога или обратном движении вверх.
-    final dragProgress = (_dragExtent / (screenHeight * 0.6)).clamp(0.0, 1.0);
-    final barrierOpacity = 0.55 * (1 - dragProgress);
-    return NotificationListener<OverscrollNotification>(
-      onNotification: (notification) {
-        if (notification.overscroll < 0) {
-          _updateDrag(-notification.overscroll);
-        }
-        return false;
-      },
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onVerticalDragUpdate: (details) {
-          final delta = details.primaryDelta;
-          if (delta == null) return;
-          // Разрешаем и движение вниз, и обратное подтягивание вверх — оно
-          // просто ограничено снизу нулём (дальше исходного положения
-          // "вверх" содержимое не уезжает).
-          _updateDrag(delta);
-        },
-        onVerticalDragEnd: (_) => _handleReleaseOrCancel(),
-        onVerticalDragCancel: () => _handleReleaseOrCancel(),
-        child: Stack(
-          clipBehavior: Clip.none,
+    return AnimatedBuilder(
+      animation: widget.animation,
+      builder: (context, _) {
+        // entrance идёт 0 -> 1 при появлении и обратно при закрытии —
+        // именно от него, а не только от драга, зависит затемнение подложки,
+        // поэтому оно плавно нарастает при открытии и плавно спадает при
+        // закрытии, а не появляется/исчезает рывком.
+        final entrance = Curves.easeOutCubic.transform(widget.animation.value.clamp(0.0, 1.0));
+        final dragProgress = (_dragExtent / (screenHeight * 0.6)).clamp(0.0, 1.0);
+        final barrierOpacity = 0.55 * entrance * (1 - dragProgress);
+        return Stack(
           children: [
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: IgnorePointer(
-                // OverflowBox позволяет собственной подложке залезть выше
-                // границ карточки модалки и перекрыть весь экран, а не
-                // только видимую высоту самого листа.
-                child: OverflowBox(
-                  maxHeight: screenHeight,
-                  alignment: Alignment.bottomCenter,
-                  child: Container(
-                    height: screenHeight,
-                    color: Colors.black.withOpacity(barrierOpacity),
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _handleBarrierTap,
+                child: Container(color: Colors.black.withOpacity(barrierOpacity)),
+              ),
+            ),
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Transform.translate(
+                offset: Offset(0, _dragExtent + (1 - entrance) * 48),
+                child: Opacity(
+                  opacity: entrance,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {},
+                    onVerticalDragUpdate: widget.enableDrag
+                        ? (details) {
+                            final delta = details.primaryDelta;
+                            if (delta == null) return;
+                            _updateDrag(delta);
+                          }
+                        : null,
+                    onVerticalDragEnd: widget.enableDrag ? (_) => _handleReleaseOrCancel() : null,
+                    onVerticalDragCancel: widget.enableDrag ? _handleReleaseOrCancel : null,
+                    child: NotificationListener<OverscrollNotification>(
+                      onNotification: (notification) {
+                        if (widget.enableDrag && notification.overscroll < 0) {
+                          _updateDrag(-notification.overscroll);
+                        }
+                        return false;
+                      },
+                      child: SafeArea(
+                        top: false,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(maxHeight: screenHeight * 0.92),
+                          child: Material(
+                            color: Theme.of(context).colorScheme.surface,
+                            shape: const RoundedRectangleBorder(
+                              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: Builder(builder: widget.builder),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
-            Transform.translate(
-              offset: Offset(0, _dragExtent),
-              child: widget.child,
-            ),
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 }
+
 
 // (3) Короткое всплывающее уведомление снизу экрана (замена стандартного
 // SnackBar): появляется, поднимаясь снизу и проявляясь, а через паузу
@@ -1290,19 +1344,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       goalTitle: _ordinalGoalName(newIndex + 1),
       history: [],
     );
+    // (3) После добавления слайд "Добавить цель" просто сдвигается на одну
+    // позицию вперёд (новая цель встаёт на его прежнее место) — мы остаёмся
+    // именно на этом слайде, а не перепрыгиваем на только что созданную
+    // цель. Так можно быстро добавить подряд несколько целей, не покидая
+    // экран добавления между нажатиями.
+    final stillCanAdd = goals.length + 1 < _maxGoals;
+    final addSlideIndex = stillCanAdd ? newIndex + 1 : newIndex;
     setState(() {
       goals.add(newGoal);
-      currentGoalIndex = newIndex;
+      currentGoalIndex = addSlideIndex;
     });
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('goals_count', goals.length);
     await _saveGoalData(newIndex);
     if (_pageController.hasClients) {
       _pageController.animateToPage(
-        newIndex,
+        addSlideIndex,
         duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 300),
         curve: Curves.easeInOut,
       );
+    } else {
+      // Контроллер ещё не подключён к PageView (крайне маловероятно, ведь
+      // кнопка живёт прямо внутри него, но на всякий случай подстрахуемся) —
+      // выставляем страницу без анимации сразу же, как только он появится.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_pageController.hasClients) {
+          _pageController.jumpToPage(addSlideIndex);
+        }
+      });
     }
   }
 
@@ -1503,8 +1573,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     // Третья и последующие цели — удаляются полностью из списка.
     final oldLength = goals.length;
+    // (5) Перед удалением запоминаем, у каких целей ПОСЛЕ удаляемой сейчас
+    // стандартное название вида "Пятая мечта", соответствующее их текущей
+    // позиции — это нужно, чтобы после сдвига списка вниз аккуратно
+    // переименовать именно их под новую позицию, а не задеть цели,
+    // которые пользователь назвал по-своему.
+    final Map<int, bool> hadDefaultTitleAt = {
+      for (int i = index + 1; i < oldLength; i++)
+        i: goals[i].goalTitle == _ordinalGoalName(i + 1),
+    };
     setState(() {
       goals.removeAt(index);
+      // Названия вида "Пятая мечта" пересчитываем под новую позицию у всех
+      // сдвинувшихся целей, которые ещё не были переименованы вручную —
+      // иначе после удаления, скажем, пятой цели дальше шли бы "Четвёртая
+      // мечта" и "Шестая мечта" вместо аккуратных "Четвёртая" и "Пятая".
+      for (int oldI = index + 1; oldI < oldLength; oldI++) {
+        if (hadDefaultTitleAt[oldI] == true) {
+          final newI = oldI - 1;
+          goals[newI].goalTitle = _ordinalGoalName(newI + 1);
+        }
+      }
       if (currentGoalIndex >= goals.length) {
         currentGoalIndex = goals.length - 1 < 0 ? 0 : goals.length - 1;
       }
@@ -1552,15 +1641,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _showComingSoonBottomSheet(String title, String description) {
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: Padding(
+        return Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1592,7 +1677,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        ));
+        );
       },
     );
   }
@@ -1600,16 +1685,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // (1)+(7) Таблица лидеров: сортировка по убыванию суммы (при равенстве —
   // по имени А-Я) и удаление доната доступно только в режиме разработчика.
   void _showLeaderboardModal() {
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: Container(
+        return Container(
           padding: const EdgeInsets.all(24.0),
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(context).size.height * 0.7,
@@ -1733,22 +1813,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        ));
+        );
       },
     );
   }
 
   // (1) Подтверждение удаления доната (доступно только в режиме разработчика)
   void _confirmDeleteDonation(String docId) {
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: Padding(
+        return Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1801,22 +1877,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        ));
+        );
       },
     );
   }
 
   // (1b) Подтверждение удаления сообщения от пользователя (только в dev-режиме)
   void _confirmDeleteMessage(String docId) {
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: Padding(
+        return Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1869,21 +1941,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        ));
+        );
       },
     );
   }
 
   void _showSupportModal() {
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: Padding(
+        return Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1935,7 +2003,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        ));
+        );
       },
     );
   }
@@ -1943,15 +2011,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Всплывающее окно "Сначала укажите цену мечты!" — в стиле "Поддержать
   // проект", но с восклицательным знаком и без строки с картой (окно чуть меньше).
   void _showSetPriceFirstModal() {
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: Padding(
+        return Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1977,7 +2041,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        ));
+        );
       },
     );
   }
@@ -2083,7 +2147,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   // (10) Модалка ввода кода не закрывается случайно от тапа по фону
   // (isDismissible: false) и от системного drag-хендла (enableDrag: false),
-  // но осознанный свайп вниз (через _SwipeDownToClose) по-прежнему закрывает
+  // но осознанный свайп вниз по-прежнему закрывает
   // её, как и все остальные всплывающие окна — так же, как и крестик.
   void _showDevCodeModal() async {
     if (_devCodeModalOpen) return;
@@ -2102,18 +2166,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _devCodeModalOpen = false;
       return;
     }
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      isScrollControlled: true,
       isDismissible: false,
       enableDrag: false,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: StatefulBuilder(
+        return StatefulBuilder(
           builder: (context, setModalState) {
             return Padding(
               padding: EdgeInsets.only(
@@ -2241,7 +2300,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             );
           },
-        ));
+        );
       },
     ).then((_) {
       // Окно закрылось (любым способом) — снова разрешаем открыть его.
@@ -2273,16 +2332,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _showAddDonationModal() {
     final donorNameController = TextEditingController();
     final donorAmountController = TextEditingController();
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: Padding(
+        return Padding(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom + 24,
             top: 24,
@@ -2344,7 +2398,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        ));
+        );
       },
     );
   }
@@ -2353,16 +2407,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // включён на этом устройстве.
   void _showMessageDeveloperModal() {
     final messageController = TextEditingController();
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: Padding(
+        return Padding(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom + 24,
             top: 24,
@@ -2424,23 +2473,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        ));
+        );
       },
     );
   }
 
   // (9) Для разработчика: история всех сообщений от пользователей
   void _showDeveloperMessagesModal() {
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: Container(
+        return Container(
           padding: const EdgeInsets.all(24.0),
           constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
           child: Column(
@@ -2533,23 +2577,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        ));
+        );
       },
     );
   }
 
   // (6) "История желаний" — достигнутые и позже удалённые цели
   void _showWishHistoryModal() {
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: Container(
+        return Container(
           padding: const EdgeInsets.all(24.0),
           constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
           child: Column(
@@ -2607,7 +2646,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        ));
+        );
       },
     );
   }
@@ -2620,16 +2659,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final settingsScrollController = ScrollController();
     bool showBottomFade = true;
     if (!mounted) return;
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: StatefulBuilder(
+        return StatefulBuilder(
           builder: (context, setModalState) {
             return Padding(
               padding: EdgeInsets.only(
@@ -2722,7 +2756,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                       value: appState.isDark,
                       onChanged: (val) {
+                        // (1) Тема переключается мгновенно во всём
+                        // приложении (setState в корневом MyApp), а само
+                        // окно настроек после короткой паузы закрывается
+                        // автоматически, чтобы сразу было видно результат.
                         appState.toggleTheme(val);
+                        setModalState(() {});
+                        Future.delayed(
+                          kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 220),
+                          () {
+                            if (Navigator.canPop(context)) Navigator.pop(context);
+                          },
+                        );
                       },
                     ),
                     SwitchListTile(
@@ -2746,11 +2791,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         appState.lightColors.length,
                         (index) => GestureDetector(
                           onTap: () {
-                            // (4) Раньше выбор цвета сразу закрывал окно
-                            // настроек — теперь можно спокойно перебрать
-                            // несколько цветов подряд и закрыть вручную.
+                            // (1) Цвет темы применяется мгновенно во всём
+                            // приложении, а окно настроек после короткой
+                            // паузы (чтобы успеть увидеть галочку на
+                            // выбранном цвете) закрывается само.
                             appState.setColor(index);
                             setModalState(() {});
+                            Future.delayed(
+                              kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 220),
+                              () {
+                                if (Navigator.canPop(context)) Navigator.pop(context);
+                              },
+                            );
                           },
                           child: CircleAvatar(
                             radius: 18,
@@ -2974,7 +3026,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             );
           },
-        ));
+        );
       },
     );
   }
@@ -2984,16 +3036,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _showGoalInfoModal(GoalData goal) {
     final estimate = estimateRemainingToGoal(goal);
     final remaining = goal.targetAmount - goal.currentAmount;
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: Padding(
+        return Padding(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom + 24,
             top: 24,
@@ -3045,7 +3092,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        ));
+        );
       },
     );
   }
@@ -3080,16 +3127,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     String selectedAllowancePeriod = goal.allowancePeriod;
     DateTime? selectedTargetDate = goal.targetDate;
 
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: StatefulBuilder(
+        return StatefulBuilder(
           builder: (context, setModalState) {
             return Padding(
               padding: EdgeInsets.only(
@@ -3322,31 +3364,86 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                           ),
                           onPressed: () {
-                            showDialog(
+                            // (6) Подтверждение удаления/сброса цели теперь
+                            // оформлено в едином стиле с остальными
+                            // всплывающими окнами приложения (как у
+                            // подтверждения удаления пожертвования): та же
+                            // крупная иконка сверху, заголовок, подпись и
+                            // пара кнопок в ряд — вместо системного
+                            // AlertDialog, который выглядел иначе, чем всё
+                            // остальное в приложении.
+                            _showAppModal(
                               context: context,
-                              builder: (dialogContext) => AlertDialog(
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                                title: Text(resetOnly ? 'Сбросить цель?' : 'Удалить цель?'),
-                                content: Text(
-                                  resetOnly
-                                      ? 'Название, сумма и фото сбросятся к стандартным. Если цель была достигнута, она сохранится в «Истории желаний».'
-                                      : 'Цель будет полностью удалена из списка. Если она была достигнута, она сохранится в «Истории желаний».',
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(dialogContext),
-                                    child: const Text('Отмена'),
+                              builder: (dialogContext) {
+                                final dialogAppState = MyApp.of(dialogContext)!;
+                                return Padding(
+                                  padding: const EdgeInsets.all(24.0),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        resetOnly ? Icons.restart_alt_rounded : Icons.delete_outline,
+                                        size: 48,
+                                        color: Colors.red,
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        resetOnly ? 'Сбросить цель?' : 'Удалить цель?',
+                                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        resetOnly
+                                            ? 'Название, сумма и фото сбросятся к стандартным. Если цель была достигнута, она сохранится в «Истории желаний».'
+                                            : 'Цель будет полностью удалена из списка. Если она была достигнута, она сохранится в «Истории желаний».',
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(fontSize: 14, color: Colors.grey),
+                                      ),
+                                      const SizedBox(height: 20),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: SizedBox(
+                                              height: 48,
+                                              child: OutlinedButton(
+                                                style: OutlinedButton.styleFrom(
+                                                  foregroundColor: dialogAppState.primaryColor,
+                                                  side: BorderSide(color: dialogAppState.primaryColor),
+                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                                ),
+                                                onPressed: () => Navigator.pop(dialogContext),
+                                                child: const Text('Отмена', style: TextStyle(fontWeight: FontWeight.bold)),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: SizedBox(
+                                              height: 48,
+                                              child: ElevatedButton(
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: Colors.red,
+                                                  foregroundColor: Colors.white,
+                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                                ),
+                                                onPressed: () {
+                                                  Navigator.pop(dialogContext);
+                                                  Navigator.pop(context);
+                                                  _deleteGoal(currentGoalIndex);
+                                                },
+                                                child: Text(
+                                                  resetOnly ? 'Сбросить' : 'Удалить',
+                                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
                                   ),
-                                  TextButton(
-                                    onPressed: () {
-                                      Navigator.pop(dialogContext);
-                                      Navigator.pop(context);
-                                      _deleteGoal(currentGoalIndex);
-                                    },
-                                    child: Text(resetOnly ? 'Сбросить' : 'Удалить', style: const TextStyle(color: Colors.red)),
-                                  ),
-                                ],
-                              ),
+                                );
+                              },
                             );
                           },
                           icon: Icon(resetOnly ? Icons.restart_alt_rounded : Icons.delete_outline),
@@ -3359,7 +3456,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             );
           },
-        ));
+        );
       },
     );
   }
@@ -3372,16 +3469,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     final controller = TextEditingController();
-    showModalBottomSheet(
+    _showAppModal(
       context: context,
-      barrierColor: Colors.transparent,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (context) {
         final appState = MyApp.of(context)!;
-        return _SwipeDownToClose(child: Padding(
+        return Padding(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom + 24,
             top: 24,
@@ -3428,7 +3520,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ],
           ),
-        ));
+        );
       },
     );
   }
@@ -3774,11 +3866,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               alignment: Alignment.topCenter,
               child: AnimatedSwitcher(
                 duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 300),
-                switchInCurve: Curves.easeInOut,
-                switchOutCurve: Curves.easeInOut,
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                // (4) Помимо fade, добавлено лёгкое вертикальное смещение —
+                // новое содержимое не просто проявляется на месте, а слегка
+                // "подъезжает" снизу, а уходящее чуть уезжает вверх. Такое
+                // сочетание fade + slide выглядит заметно более качественно,
+                // чем один только fade, но остаётся сдержанным и не мешает.
                 transitionBuilder: (child, animation) => FadeTransition(
                   opacity: animation,
-                  child: child,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 0.06),
+                      end: Offset.zero,
+                    ).animate(animation),
+                    child: child,
+                  ),
                 ),
                 child: !onAddSlide
                     ? Column(
@@ -3938,9 +4041,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         children: [
                           const SizedBox(height: 32),
                           Center(
-                            child: Text(
-                              'Нажмите «+», чтобы добавить новую цель',
-                              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                            // (4) У самой надписи — собственное плавное
+                            // появление (fade + лёгкий подъём снизу вверх),
+                            // которое проигрывается один раз при появлении
+                            // слайда, поверх общего fade+slide всего блока —
+                            // получается более "живой", многослойный эффект.
+                            child: TweenAnimationBuilder<double>(
+                              tween: Tween(begin: 0.0, end: 1.0),
+                              duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 420),
+                              curve: Curves.easeOutCubic,
+                              builder: (context, value, child) => Opacity(
+                                opacity: value,
+                                child: Transform.translate(
+                                  offset: Offset(0, (1 - value) * 10),
+                                  child: child,
+                                ),
+                              ),
+                              child: Text(
+                                'Нажмите «+», чтобы добавить новую цель',
+                                style: TextStyle(color: Colors.grey[600], fontSize: 13),
+                              ),
                             ),
                           ),
                           const SizedBox(height: 24),
