@@ -316,9 +316,32 @@ class _AppModalSheetState extends State<_AppModalSheet> with SingleTickerProvide
   @override
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
+    // (5) Раньше AnimatedBuilder.builder пересобирал ВЕСЬ Stack, включая
+    // содержимое листа (Builder(builder: widget.builder)), на каждом кадре
+    // анимации появления — для длинных окон (настройки, таблица лидеров)
+    // это была тяжёлая пересборка 60 раз в секунду, отсюда и рывки/просадка
+    // до ~30 fps. Теперь тяжёлое содержимое строится один раз и передаётся
+    // через параметр child — на каждый кадр пересчитываются только лёгкие
+    // Transform/Opacity/цвет подложки поверх уже готового дерева, а само
+    // содержимое листа заново не строится.
+    final sheetContent = SafeArea(
+      top: false,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: screenHeight * 0.92),
+        child: Material(
+          color: Theme.of(context).colorScheme.surface,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Builder(builder: widget.builder),
+        ),
+      ),
+    );
     return AnimatedBuilder(
       animation: widget.animation,
-      builder: (context, _) {
+      child: sheetContent,
+      builder: (context, child) {
         // entrance идёт 0 -> 1 при появлении и обратно при закрытии —
         // именно от него, а не только от драга, зависит затемнение подложки,
         // поэтому оно плавно нарастает при открытии и плавно спадает при
@@ -360,20 +383,7 @@ class _AppModalSheetState extends State<_AppModalSheet> with SingleTickerProvide
                         }
                         return false;
                       },
-                      child: SafeArea(
-                        top: false,
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(maxHeight: screenHeight * 0.92),
-                          child: Material(
-                            color: Theme.of(context).colorScheme.surface,
-                            shape: const RoundedRectangleBorder(
-                              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-                            ),
-                            clipBehavior: Clip.antiAlias,
-                            child: Builder(builder: widget.builder),
-                          ),
-                        ),
-                      ),
+                      child: child,
                     ),
                   ),
                 ),
@@ -1134,6 +1144,15 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int currentGoalIndex = 0;
   final PageController _pageController = PageController();
+
+  // (6) Стрим счётчика скачиваний кэшируется один раз на весь жизненный
+  // цикл экрана — раньше он создавался заново прямо внутри builder'а
+  // StreamBuilder в окне настроек, и каждый ребилд (в т.ч. от прокрутки
+  // списка настроек) пересоздавал подписку, из-за чего число на миг
+  // сменялось на "…".
+  Stream<DocumentSnapshot>? _downloadsCountStreamCache;
+  Stream<DocumentSnapshot> get _downloadsCountStream => _downloadsCountStreamCache ??=
+      FirebaseFirestore.instance.collection('app_stats').doc('downloads').snapshots();
 
   int _nameTapCount = 0;
   // (1) Защита от повторного открытия окна ввода кода разработчика поверх
@@ -2680,14 +2699,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               // доступно прокруткой внутри (SingleChildScrollView ниже).
               child: ConstrainedBox(
                 constraints: BoxConstraints(
-                  // (4) Раньше указывался только maxHeight — лист сам
-                  // сжимался под объём контента, и без «Режима разработчика»
-                  // (меньше пунктов) верхний край листа с «Настройки»
-                  // оказывался ниже, чем с включённым режимом. Отступы от
-                  // этого визуально «скакали». Фиксируем minHeight == maxHeight,
-                  // чтобы высота (и верхний отступ) листа была одинаковой
-                  // независимо от количества пунктов внутри.
-                  minHeight: MediaQuery.of(context).size.height * 0.75,
+                  // (3) Раньше здесь также стоял жёсткий minHeight,
+                  // равный maxHeight, чтобы верхний край окна не "скакал"
+                  // между обычным и режимом разработчика. Но из-за этого
+                  // при коротком содержимом снизу оставалось пустое
+                  // пространство — тот самый некрасивый "подбородок" под
+                  // текстом про ИИ. Оставляем только maxHeight — окно
+                  // сжимается по содержимому и не тянется искусственно.
                   maxHeight: MediaQuery.of(context).size.height * 0.75,
                 ),
                 // (1) Раньше последняя строка списка обрезалась резкой
@@ -2874,26 +2892,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ],
                       ),
                       const SizedBox(height: 12),
-                      // (10) Счётчик уникальных скачиваний приложения — считает
-                      // устройства (Firestore), повторная установка на то же
-                      // устройство счётчик не увеличивает.
+                      // (6) Раньше stream создавался прямо в builder этого
+                      // StreamBuilder — при каждом ребилде родителя (в т.ч.
+                      // от прокрутки списка настроек) создавался НОВЫЙ
+                      // Stream, StreamBuilder пересоздавал подписку и на миг
+                      // показывал "…" вместо уже известного числа. Теперь
+                      // стрим берётся из закэшированного один раз на всё
+                      // время открытия окна (_downloadsCountStream ниже).
                       StreamBuilder<DocumentSnapshot>(
-                        stream: FirebaseFirestore.instance
-                            .collection('app_stats')
-                            .doc('downloads')
-                            .snapshots(),
+                        stream: _downloadsCountStream,
                         builder: (context, snapshot) {
                           final data = snapshot.data?.data() as Map<String, dynamic>?;
                           final count = (data?['count'] as num?)?.toInt();
                           final displayValue = snapshot.connectionState == ConnectionState.waiting
                               ? '…'
                               : (count?.toString() ?? '—');
-                          // (5) Раньше этот пункт был залит сплошным фоном
-                          // (F7F2FA/1E1E1E), а остальные пункты режима
-                          // разработчика ("Добавить пожертвование" и т.д.) —
-                          // OutlinedButton с прозрачным фоном и обводкой.
-                          // Приводим к тому же стилю: прозрачный фон, рамка
-                          // цвета темы, та же высота 48, как у кнопок ниже.
+                          // (5)/(8) Такой же стиль, как у остальных пунктов
+                          // (обводка, прозрачный фон), и такое же центрирование
+                          // содержимого, как у OutlinedButton.icon ниже: иконка
+                          // слева, а не растянутые по краям Row.
                           return Container(
                             width: double.infinity,
                             height: 48,
@@ -2903,21 +2920,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               borderRadius: BorderRadius.circular(16),
                             ),
                             child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Row(
-                                  children: [
-                                    Icon(Icons.download_rounded, size: 18, color: appState.primaryColor),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      'Скачиваний приложения',
-                                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: appState.primaryColor),
-                                    ),
-                                  ],
-                                ),
+                                // (7) Иконка теперь той же обводочной
+                                // стилистики (outlined), что и у остальных
+                                // пунктов режима разработчика.
+                                Icon(Icons.download_outlined, size: 18, color: appState.primaryColor),
+                                const SizedBox(width: 8),
                                 Text(
-                                  displayValue,
-                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: appState.primaryColor),
+                                  'Скачиваний приложения: $displayValue',
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: appState.primaryColor),
                                 ),
                               ],
                             ),
@@ -3895,15 +3907,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     flex: 3,
                     child: SizedBox(
                       height: 48,
-                      child: ElevatedButton.icon(
+                      child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: appState.primaryColor,
                           foregroundColor: Colors.white,
+                          // (2) Убрана тень под кнопкой "Пополнить".
+                          elevation: 0,
+                          shadowColor: Colors.transparent,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                         ),
                         onPressed: () => _showTransactionBottomSheet(true),
-                        icon: const Icon(Icons.add, size: 20),
-                        label: const Text('Пополнить', style: TextStyle(fontWeight: FontWeight.bold)),
+                        // (1) Убран значок "+", надпись теперь по центру
+                        // кнопки (как и было бы по умолчанию у ElevatedButton
+                        // без иконки, но явно фиксируем через Center).
+                        child: const Center(
+                          child: Text('Пополнить', style: TextStyle(fontWeight: FontWeight.bold)),
+                        ),
                       ),
                     ),
                   ),
@@ -4039,7 +4058,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const SizedBox(height: 32),
+                          // (4) Раньше отступ до надписи был 32px — теперь
+                          // подсказка расположена сразу под точками-
+                          // индикаторами (там уже есть свой отступ 16px
+                          // после Row с точками), поэтому здесь оставляем
+                          // только небольшой зазор.
+                          const SizedBox(height: 4),
                           Center(
                             // (4) У самой надписи — собственное плавное
                             // появление (fade + лёгкий подъём снизу вверх),
