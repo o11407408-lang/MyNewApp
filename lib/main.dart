@@ -383,7 +383,11 @@ class _AppModalSheetState extends State<_AppModalSheet> with SingleTickerProvide
                         }
                         return false;
                       },
-                      child: child,
+                      // AnimatedBuilder передаёт child как Widget? — здесь он
+                      // гарантированно не null (мы всегда задаём child:
+                      // sheetContent при вызове AnimatedBuilder), поэтому
+                      // безопасно разворачиваем через child!.
+                      child: child!,
                     ),
                   ),
                 ),
