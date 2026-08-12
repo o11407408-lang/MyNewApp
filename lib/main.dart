@@ -265,6 +265,18 @@ class _AppModalSheetState extends State<_AppModalSheet> with SingleTickerProvide
   late final AnimationController _springController;
   Animation<double>? _springAnimation;
 
+  // (3) Раньше sheetContent пересоздавался прямо внутри build() — и хотя
+  // AnimatedBuilder не пересобирал его на кадрах анимации ОТКРЫТИЯ (см.
+  // комментарий ниже), сам build() этого State ВСЁ РАВНО перезапускался на
+  // каждый setState — а он вызывается на каждом тике _springController при
+  // возврате листа после свайпа, и на каждый пиксель движения пальца во
+  // время самого драга. То есть весь тяжёлый список настроек (со
+  // ShaderMask, StreamBuilder и т.д.) пересобирался заново десятки раз в
+  // секунду при любом свайпе — отсюда просадки до ~30 fps. Теперь строим
+  // его один-единственный раз за всё время жизни окна и переиспользуем
+  // тот же самый экземпляр виджета дальше.
+  Widget? _cachedSheetContent;
+
   @override
   void initState() {
     super.initState();
@@ -324,7 +336,11 @@ class _AppModalSheetState extends State<_AppModalSheet> with SingleTickerProvide
     // через параметр child — на каждый кадр пересчитываются только лёгкие
     // Transform/Opacity/цвет подложки поверх уже готового дерева, а само
     // содержимое листа заново не строится.
-    final sheetContent = SafeArea(
+    // (3) И, что важнее, теперь оно ещё и кэшируется на уровне State —
+    // построенный один раз виджет переживает все последующие setState
+    // (драг пальцем, spring-возврат), а не создаётся заново на каждый из
+    // них.
+    final sheetContent = _cachedSheetContent ??= SafeArea(
       top: false,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: screenHeight * 0.92),
@@ -364,30 +380,69 @@ class _AppModalSheetState extends State<_AppModalSheet> with SingleTickerProvide
                 offset: Offset(0, _dragExtent + (1 - entrance) * 48),
                 child: Opacity(
                   opacity: entrance,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () {},
-                    onVerticalDragUpdate: widget.enableDrag
-                        ? (details) {
-                            final delta = details.primaryDelta;
-                            if (delta == null) return;
-                            _updateDrag(delta);
+                  // (1) Раньше отпускание пальца обрабатывалось только через
+                  // onVerticalDragEnd/onVerticalDragCancel самого
+                  // GestureDetector. Но когда внутри окна оказывается
+                  // прокручиваемый список, который реально можно
+                  // прокручивать (например, настройки в режиме
+                  // разработчика — там пунктов больше, и список уже не
+                  // помещается без скролла), жест "выигрывает" внутренний
+                  // Scrollable, а не наш GestureDetector — тогда
+                  // onVerticalDragEnd/Cancel так и не срабатывали, и окно
+                  // оставалось зависшим там, куда его дотянули. Listener
+                  // ловит подъём пальца ВСЕГДА, независимо от того, кто
+                  // выиграл жест (он не участвует в арене жестов, просто
+                  // наблюдает), поэтому окно теперь гарантированно либо
+                  // закрывается, либо плавно возвращается на место при
+                  // любом отпускании пальца.
+                  child: Listener(
+                    onPointerUp: (_) {
+                      if (widget.enableDrag && _dragExtent > 0) _handleReleaseOrCancel();
+                    },
+                    onPointerCancel: (_) {
+                      if (widget.enableDrag && _dragExtent > 0) _handleReleaseOrCancel();
+                    },
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {},
+                      onVerticalDragUpdate: widget.enableDrag
+                          ? (details) {
+                              final delta = details.primaryDelta;
+                              if (delta == null) return;
+                              _updateDrag(delta);
+                            }
+                          : null,
+                      onVerticalDragEnd: widget.enableDrag ? (_) => _handleReleaseOrCancel() : null,
+                      onVerticalDragCancel: widget.enableDrag ? _handleReleaseOrCancel : null,
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: (notification) {
+                          if (!widget.enableDrag) return false;
+                          if (notification is OverscrollNotification && notification.overscroll < 0) {
+                            _updateDrag(-notification.overscroll);
+                          } else if (notification is ScrollEndNotification && _dragExtent > 0) {
+                            // Прокручиваемый список сам сообщает об окончании
+                            // жеста (когда именно он забрал драг себе) — на
+                            // этот сигнал тоже реагируем на случай, если
+                            // Listener выше почему-то не сработал раньше.
+                            _handleReleaseOrCancel();
                           }
-                        : null,
-                    onVerticalDragEnd: widget.enableDrag ? (_) => _handleReleaseOrCancel() : null,
-                    onVerticalDragCancel: widget.enableDrag ? _handleReleaseOrCancel : null,
-                    child: NotificationListener<OverscrollNotification>(
-                      onNotification: (notification) {
-                        if (widget.enableDrag && notification.overscroll < 0) {
-                          _updateDrag(-notification.overscroll);
-                        }
-                        return false;
-                      },
-                      // AnimatedBuilder передаёт child как Widget? — здесь он
-                      // гарантированно не null (мы всегда задаём child:
-                      // sheetContent при вызове AnimatedBuilder), поэтому
-                      // безопасно разворачиваем через child!.
-                      child: child!,
+                          return false;
+                        },
+                        // AnimatedBuilder передаёт child как Widget? — здесь он
+                        // гарантированно не null (мы всегда задаём child:
+                        // sheetContent при вызове AnimatedBuilder), поэтому
+                        // безопасно разворачиваем через child!.
+                        // (3) RepaintBoundary изолирует тяжёлое содержимое
+                        // листа в отдельный слой: Opacity во время анимации
+                        // появления/скрытия каждый кадр перекомпоновывает
+                        // (alpha-blend) этот слой, но без границы ей
+                        // пришлось бы каждый раз ЗАНОВО ОТРИСОВЫВАТЬ весь
+                        // сложный список настроек целиком — с границей же
+                        // растровая картинка кэшируется, и каждый кадр
+                        // просто меняется её прозрачность, что кардинально
+                        // дешевле.
+                        child: RepaintBoundary(child: child!),
+                      ),
                     ),
                   ),
                 ),
@@ -1002,6 +1057,11 @@ class GoalData {
   // минут). Видна и редактируется только в настройках цели, на карточке
   // не отображается.
   DateTime? targetDate;
+  // (4) Отмечает, что достижение этой цели уже один раз записано в
+  // "Историю желаний" (в момент, когда сумма впервые достигла цели). Нужно,
+  // чтобы при последующем удалении/сбросе уже достигнутой цели запись не
+  // задваивалась.
+  bool historyRecorded;
 
   GoalData({
     required this.currentAmount,
@@ -1013,6 +1073,7 @@ class GoalData {
     this.allowancePeriod = 'day',
     this.currency = '₽',
     this.targetDate,
+    this.historyRecorded = false,
   });
 }
 
@@ -1308,6 +1369,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         goals[i].currency = prefs.getString('goal_currency_$i') ?? '₽';
         final targetDateStr = prefs.getString('target_date_$i');
         goals[i].targetDate = targetDateStr != null ? DateTime.tryParse(targetDateStr) : null;
+        goals[i].historyRecorded = prefs.getBool('history_recorded_$i') ?? false;
       }
     });
   }
@@ -1344,6 +1406,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } else {
       await prefs.remove('target_date_$index');
     }
+    await prefs.setBool('history_recorded_$index', goals[index].historyRecorded);
   }
 
   // (7) Сохраняем список "История желаний"
@@ -1410,17 +1473,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _updateMoney(double delta) async {
+    final goalBefore = goals[currentGoalIndex];
+    // (4) Запоминаем, была ли цель УЖЕ достигнута ДО этого начисления —
+    // поздравление и перенос в "Историю желаний" должны сработать только
+    // один раз, именно на том начислении, которое впервые доводит сумму до
+    // цели, а не при каждом следующем пополнении уже закрытой цели.
+    final wasAlreadyReached = goalBefore.targetAmount > 0 && goalBefore.currentAmount >= goalBefore.targetAmount;
     setState(() {
       goals[currentGoalIndex].currentAmount += delta;
       if (goals[currentGoalIndex].currentAmount < 0) {
         goals[currentGoalIndex].currentAmount = 0;
+      }
+      // (4) Нельзя накопить больше заданной суммы — как только цель
+      // достигнута, дальнейшие пополнения обрезаются по целевой сумме.
+      if (goals[currentGoalIndex].targetAmount > 0 &&
+          goals[currentGoalIndex].currentAmount > goals[currentGoalIndex].targetAmount) {
+        goals[currentGoalIndex].currentAmount = goals[currentGoalIndex].targetAmount;
       }
       final type = delta > 0 ? '+' : '-';
       final entry = '$type ${delta.abs().toStringAsFixed(0)} ${goals[currentGoalIndex].currency}';
       goals[currentGoalIndex].history.insert(0, entry);
     });
     _saveGoalData(currentGoalIndex);
-    _checkGoalReached();
+    if (!wasAlreadyReached) {
+      _checkGoalReached();
+    }
   }
 
   // (4) Удаление одной записи операции из истории — AnimatedSize, которым
@@ -1451,9 +1528,106 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     Share.share(shareText);
   }
 
+  // (6)/(2) Единое окно подтверждения удаления/сброса цели — переиспользуется
+  // и кнопкой "Удалить/Сбросить цель" в окне редактирования, и красной
+  // ссылкой "Удалить цель?" на экране поздравления с достижением цели.
+  void _showDeleteGoalConfirmModal(BuildContext context, int goalIndex) {
+    final bool resetOnly = _isResetOnlyGoal(goalIndex);
+    _showAppModal(
+      context: context,
+      builder: (dialogContext) {
+        final dialogAppState = MyApp.of(dialogContext)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                resetOnly ? Icons.restart_alt_rounded : Icons.delete_outline,
+                size: 48,
+                color: Colors.red,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                resetOnly ? 'Сбросить цель?' : 'Удалить цель?',
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                resetOnly
+                    ? 'Название, сумма и фото сбросятся к стандартным. Если цель была достигнута, она сохранится в «Истории желаний».'
+                    : 'Цель будет полностью удалена из списка. Если она была достигнута, она сохранится в «Истории желаний».',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: dialogAppState.primaryColor,
+                          side: BorderSide(color: dialogAppState.primaryColor),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: const Text('Отмена', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () {
+                          Navigator.pop(dialogContext);
+                          Navigator.pop(context);
+                          _deleteGoal(goalIndex);
+                        },
+                        child: Text(
+                          resetOnly ? 'Сбросить' : 'Удалить',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   void _checkGoalReached() {
     final goal = goals[currentGoalIndex];
     if (goal.targetAmount > 0 && goal.currentAmount >= goal.targetAmount) {
+      final reachedGoalIndex = currentGoalIndex;
+      // (4) Цель, как только она впервые достигнута, сразу переносится в
+      // "Историю желаний" — но сама цель НЕ удаляется и НЕ сбрасывается:
+      // она остаётся на своём месте с заполненным прогрессом. Дальше
+      // _updateMoney не даст сумме уйти выше цели, а wasAlreadyReached не
+      // даст этому блоку сработать повторно при следующих начислениях.
+      _wishHistory.insert(0, {
+        'title': goal.goalTitle,
+        'amount': goal.targetAmount,
+        'currency': goal.currency,
+        'date': DateTime.now().toIso8601String(),
+      });
+      _saveWishHistory();
+      setState(() {
+        goals[reachedGoalIndex].historyRecorded = true;
+      });
+      _saveGoalData(reachedGoalIndex);
       final appState = MyApp.of(context)!;
       Navigator.push(
         context,
@@ -1471,15 +1645,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         const Spacer(),
                         Icon(Icons.emoji_events_rounded, size: 100, color: appState.primaryColor),
                         const SizedBox(height: 24),
+                        // (2) Раньше это была одна длинная строка "Поздравляю
+                        // с достижением цели, Имя" — теперь ровно две
+                        // строки: "Поздравляю" и, отдельной строкой,
+                        // "с достижением цели, Имя".
+                        const Text(
+                          'Поздравляю',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                        ),
                         Text(
-                          'Поздравляю с достижением цели, ${widget.userName}',
+                          'с достижением цели, ${widget.userName}',
                           textAlign: TextAlign.center,
                           style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 12),
-                        const Text(
-                          'Ты молодец!',
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        // (2) Вместо едва заметной серой надписи "Ты
+                        // молодец!" — кликабельная красная ссылка, которая
+                        // сразу открывает то же самое окно подтверждения
+                        // удаления/сброса цели, что и в окне редактирования.
+                        GestureDetector(
+                          onTap: () => _showDeleteGoalConfirmModal(context, reachedGoalIndex),
+                          child: const Text(
+                            'Удалить цель?',
+                            style: TextStyle(fontSize: 13, color: Colors.red, fontWeight: FontWeight.bold),
+                          ),
                         ),
                         const Spacer(),
                         SizedBox(
@@ -1554,12 +1744,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await prefs.remove('last_allowance_credit_$index');
     await prefs.remove('goal_currency_$index');
     await prefs.remove('target_date_$index');
+    await prefs.remove('history_recorded_$index');
   }
 
   Future<void> _deleteGoal(int index) async {
     final goal = goals[index];
     final wasAchieved = goal.targetAmount > 0 && goal.currentAmount >= goal.targetAmount;
-    if (wasAchieved) {
+    // (4) Если достижение этой цели уже было записано в "Историю желаний"
+    // в момент самого достижения (см. _checkGoalReached), повторно
+    // добавлять запись здесь не нужно — иначе при удалении уже достигнутой
+    // цели в истории появлялся бы дубликат.
+    if (wasAchieved && !goal.historyRecorded) {
       _wishHistory.insert(0, {
         'title': goal.goalTitle,
         'amount': goal.targetAmount,
@@ -1588,6 +1783,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         goals[index].targetDate = null;
         goals[index].currency = '₽';
         goals[index].history = [];
+        goals[index].historyRecorded = false;
       });
       await _saveGoalData(index);
       _showAppSnackBar(wasAchieved ? 'Цель удалена и сохранена в истории желаний' : 'Цель сброшена');
@@ -3379,89 +3575,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             side: const BorderSide(color: Colors.red),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                           ),
-                          onPressed: () {
-                            // (6) Подтверждение удаления/сброса цели теперь
-                            // оформлено в едином стиле с остальными
-                            // всплывающими окнами приложения (как у
-                            // подтверждения удаления пожертвования): та же
-                            // крупная иконка сверху, заголовок, подпись и
-                            // пара кнопок в ряд — вместо системного
-                            // AlertDialog, который выглядел иначе, чем всё
-                            // остальное в приложении.
-                            _showAppModal(
-                              context: context,
-                              builder: (dialogContext) {
-                                final dialogAppState = MyApp.of(dialogContext)!;
-                                return Padding(
-                                  padding: const EdgeInsets.all(24.0),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        resetOnly ? Icons.restart_alt_rounded : Icons.delete_outline,
-                                        size: 48,
-                                        color: Colors.red,
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Text(
-                                        resetOnly ? 'Сбросить цель?' : 'Удалить цель?',
-                                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        resetOnly
-                                            ? 'Название, сумма и фото сбросятся к стандартным. Если цель была достигнута, она сохранится в «Истории желаний».'
-                                            : 'Цель будет полностью удалена из списка. Если она была достигнута, она сохранится в «Истории желаний».',
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(fontSize: 14, color: Colors.grey),
-                                      ),
-                                      const SizedBox(height: 20),
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: SizedBox(
-                                              height: 48,
-                                              child: OutlinedButton(
-                                                style: OutlinedButton.styleFrom(
-                                                  foregroundColor: dialogAppState.primaryColor,
-                                                  side: BorderSide(color: dialogAppState.primaryColor),
-                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                                ),
-                                                onPressed: () => Navigator.pop(dialogContext),
-                                                child: const Text('Отмена', style: TextStyle(fontWeight: FontWeight.bold)),
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: SizedBox(
-                                              height: 48,
-                                              child: ElevatedButton(
-                                                style: ElevatedButton.styleFrom(
-                                                  backgroundColor: Colors.red,
-                                                  foregroundColor: Colors.white,
-                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                                ),
-                                                onPressed: () {
-                                                  Navigator.pop(dialogContext);
-                                                  Navigator.pop(context);
-                                                  _deleteGoal(currentGoalIndex);
-                                                },
-                                                child: Text(
-                                                  resetOnly ? 'Сбросить' : 'Удалить',
-                                                  style: const TextStyle(fontWeight: FontWeight.bold),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            );
-                          },
+                          onPressed: () => _showDeleteGoalConfirmModal(context, currentGoalIndex),
                           icon: Icon(resetOnly ? Icons.restart_alt_rounded : Icons.delete_outline),
                           label: Text(resetOnly ? 'Сбросить цель' : 'Удалить цель', style: const TextStyle(fontWeight: FontWeight.bold)),
                         ),
@@ -3884,6 +3998,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 300),
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeInCubic,
+                // (5) По умолчанию AnimatedSwitcher центрирует старое и
+                // новое содержимое внутри общего Stack (Alignment.center).
+                // Из-за этого, пока AnimatedSize ещё не досжал высоту блока
+                // от старой (высокой — с историей, кнопками доната и т.д.)
+                // к новой (короткой — просто подсказка), короткий текст
+                // "Нажмите «+»..." на мгновение оказывался по центру ещё
+                // старой, большой высоты — то есть заметно ниже, чем должен
+                // быть. Прижимаем оба варианта к верху: тогда подсказка
+                // сразу появляется на своём законном месте прямо под
+                // точками, а меняется только высота блока под ней.
+                layoutBuilder: (currentChild, previousChildren) => Stack(
+                  alignment: Alignment.topCenter,
+                  children: [
+                    ...previousChildren,
+                    if (currentChild != null) currentChild,
+                  ],
+                ),
                 // (4) Помимо fade, добавлено лёгкое вертикальное смещение —
                 // новое содержимое не просто проявляется на месте, а слегка
                 // "подъезжает" снизу, а уходящее чуть уезжает вверх. Такое
