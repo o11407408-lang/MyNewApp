@@ -722,7 +722,7 @@ ThemeData _buildTheme(Color primaryColor, bool isDark) {
         fontWeight: FontWeight.bold,
       ),
     ),
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: colorScheme.surfaceContainerHigh,
       elevation: 0,
       surfaceTintColor: Colors.transparent,
@@ -775,7 +775,7 @@ ThemeData _buildTheme(Color primaryColor, bool isDark) {
         borderSide: BorderSide(color: colorScheme.primary, width: 2),
       ),
     ),
-    dialogTheme: DialogTheme(
+    dialogTheme: DialogThemeData(
       backgroundColor: colorScheme.surfaceContainerHigh,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
