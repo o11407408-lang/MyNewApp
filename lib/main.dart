@@ -684,134 +684,17 @@ class _MyAppState extends State<MyApp> {
           child: child!,
         );
       },
-      theme: _buildTheme(primaryColor, isDark),
+      theme: ThemeData(
+        brightness: isDark ? Brightness.dark : Brightness.light,
+        scaffoldBackgroundColor: isDark ? const Color(0xFF121212) : const Color(0xFFFBF8FF),
+        colorSchemeSeed: primaryColor,
+        useMaterial3: true,
+      ),
       home: isRegistered
           ? HomeScreen(userName: userName, userLastName: userLastName)
           : const OnboardingScreen(),
     );
   }
-}
-
-// Единая точка сборки ThemeData — настоящая Material You тема: вся палитра
-// (surface, surfaceContainer*, outline и т.д.) генерируется из одного
-// primaryColor через ColorScheme.fromSeed, а не захардкожена вручную, плюс
-// заданы компонентные темы (кнопки, поля ввода, карточки, диалоги, шторки),
-// поэтому большая часть экранов подхватывает новый стиль автоматически.
-ThemeData _buildTheme(Color primaryColor, bool isDark) {
-  final colorScheme = ColorScheme.fromSeed(
-    seedColor: primaryColor,
-    brightness: isDark ? Brightness.dark : Brightness.light,
-  );
-
-  final baseShape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(16));
-
-  return ThemeData(
-    useMaterial3: true,
-    colorScheme: colorScheme,
-    scaffoldBackgroundColor: colorScheme.surface,
-    splashFactory: InkSparkle.splashFactory,
-    appBarTheme: AppBarTheme(
-      backgroundColor: Colors.transparent,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      centerTitle: false,
-      iconTheme: IconThemeData(color: colorScheme.onSurface),
-      titleTextStyle: TextStyle(
-        color: colorScheme.onSurface,
-        fontSize: 20,
-        fontWeight: FontWeight.bold,
-      ),
-    ),
-    cardTheme: CardThemeData(
-      color: colorScheme.surfaceContainerHigh,
-      elevation: 0,
-      surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-    ),
-    elevatedButtonTheme: ElevatedButtonThemeData(
-      style: ElevatedButton.styleFrom(
-        elevation: 0,
-        shadowColor: Colors.transparent,
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
-        shape: baseShape,
-        textStyle: const TextStyle(fontWeight: FontWeight.bold),
-      ),
-    ),
-    filledButtonTheme: FilledButtonThemeData(
-      style: FilledButton.styleFrom(
-        shape: baseShape,
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
-      ),
-    ),
-    outlinedButtonTheme: OutlinedButtonThemeData(
-      style: OutlinedButton.styleFrom(
-        shape: baseShape,
-        side: BorderSide(color: colorScheme.outline),
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
-      ),
-    ),
-    textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(shape: baseShape),
-    ),
-    iconButtonTheme: IconButtonThemeData(
-      style: IconButton.styleFrom(
-        foregroundColor: colorScheme.onSurfaceVariant,
-      ),
-    ),
-    inputDecorationTheme: InputDecorationTheme(
-      filled: true,
-      fillColor: colorScheme.surfaceContainerHighest.withOpacity(0.5),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide.none,
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide.none,
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: colorScheme.primary, width: 2),
-      ),
-    ),
-    dialogTheme: DialogThemeData(
-      backgroundColor: colorScheme.surfaceContainerHigh,
-      surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-    ),
-    bottomSheetTheme: BottomSheetThemeData(
-      backgroundColor: colorScheme.surfaceContainerLow,
-      surfaceTintColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-    ),
-    dividerTheme: DividerThemeData(
-      color: colorScheme.outlineVariant.withOpacity(0.6),
-      space: 24,
-    ),
-    chipTheme: ChipThemeData(
-      backgroundColor: colorScheme.surfaceContainerHigh,
-      side: BorderSide.none,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-    ),
-    snackBarTheme: SnackBarThemeData(
-      behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-    ),
-    progressIndicatorTheme: ProgressIndicatorThemeData(
-      color: colorScheme.primary,
-      linearTrackColor: colorScheme.surfaceContainerHighest,
-      circularTrackColor: colorScheme.surfaceContainerHighest,
-    ),
-    switchTheme: SwitchThemeData(
-      thumbColor: MaterialStateProperty.resolveWith((states) =>
-          states.contains(MaterialState.selected) ? colorScheme.onPrimary : null),
-      trackColor: MaterialStateProperty.resolveWith((states) =>
-          states.contains(MaterialState.selected) ? colorScheme.primary : null),
-    ),
-  );
 }
 
 Route createAnimatedRoute(Widget page) {
@@ -859,7 +742,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Widget build(BuildContext context) {
     final appState = MyApp.of(context)!;
     final isDark = appState.isDark;
-    final colorScheme = Theme.of(context).colorScheme;
     final bool canContinue = tempSelectedColorIndex != null;
 
     return Scaffold(
@@ -899,7 +781,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHigh,
+                  color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF3EDF7),
                   borderRadius: BorderRadius.circular(24),
                 ),
                 child: Column(
@@ -917,7 +799,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHigh,
+                  color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF3EDF7),
                   borderRadius: BorderRadius.circular(24),
                 ),
                 child: Column(
@@ -1049,7 +931,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 height: 52,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: canContinue ? appState.primaryColor : colorScheme.surfaceContainerHighest,
+                    backgroundColor: canContinue ? appState.primaryColor : Colors.grey.withOpacity(0.4),
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   ),
@@ -1175,6 +1057,13 @@ class GoalData {
   // минут). Видна и редактируется только в настройках цели, на карточке
   // не отображается.
   DateTime? targetDate;
+  // (BUGFIX) Флаг "мечта уже записана в Историю желаний". Раньше запись в
+  // Историю желаний происходила только при удалении/сбросе уже достигнутой
+  // цели — из-за этого пополнение, доводящее цель до 100%, никак не
+  // отражалось в Истории желаний, пока пользователь не удалял цель вручную.
+  // Теперь запись создаётся сразу при достижении цели, а этот флаг не даёт
+  // добавить её туда повторно при последующем удалении.
+  bool wishRecorded;
 
   GoalData({
     required this.currentAmount,
@@ -1186,6 +1075,7 @@ class GoalData {
     this.allowancePeriod = 'day',
     this.currency = '₽',
     this.targetDate,
+    this.wishRecorded = false,
   });
 }
 
@@ -1585,6 +1475,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         goals[i].currency = prefs.getString('goal_currency_$i') ?? '₽';
         final targetDateStr = prefs.getString('target_date_$i');
         goals[i].targetDate = targetDateStr != null ? DateTime.tryParse(targetDateStr) : null;
+        goals[i].wishRecorded = prefs.getBool('wish_recorded_$i') ?? false;
       }
     });
   }
@@ -1621,6 +1512,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } else {
       await prefs.remove('target_date_$index');
     }
+    await prefs.setBool('wish_recorded_$index', goals[index].wishRecorded);
   }
 
   // (7) Сохраняем список "История желаний"
@@ -1795,12 +1687,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _checkGoalReached() {
     final goal = goals[currentGoalIndex];
     if (goal.targetAmount > 0 && goal.currentAmount >= goal.targetAmount) {
+      // (BUGFIX) Записываем мечту в "Историю желаний" сразу в момент
+      // достижения цели, а не только при последующем удалении — раньше
+      // пополнение, доводящее до 100%, никак не попадало в Историю
+      // желаний, если пользователь не удалял цель вручную.
+      if (!goal.wishRecorded) {
+        setState(() {
+          goal.wishRecorded = true;
+          _wishHistory.insert(0, {
+            'title': goal.goalTitle,
+            'amount': goal.targetAmount,
+            'currency': goal.currency,
+            'date': DateTime.now().toIso8601String(),
+          });
+        });
+        _saveWishHistory();
+        _saveGoalData(currentGoalIndex);
+      }
       final appState = MyApp.of(context)!;
       Navigator.push(
         context,
         createAnimatedRoute(
           Scaffold(
-            backgroundColor: Theme.of(context).colorScheme.surface,
+            backgroundColor: appState.isDark ? const Color(0xFF121212) : Colors.white,
             body: SafeArea(
               child: Stack(
                 children: [
@@ -1895,12 +1804,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await prefs.remove('last_allowance_credit_$index');
     await prefs.remove('goal_currency_$index');
     await prefs.remove('target_date_$index');
+    await prefs.remove('wish_recorded_$index');
   }
 
   Future<void> _deleteGoal(int index) async {
     final goal = goals[index];
     final wasAchieved = goal.targetAmount > 0 && goal.currentAmount >= goal.targetAmount;
-    if (wasAchieved) {
+    // (BUGFIX) Если мечта уже была записана в Историю желаний в момент
+    // достижения цели (см. _checkGoalReached), повторно не дублируем запись
+    // при удалении/сбросе — но на случай, если цель почему-то была
+    // достигнута в обход _checkGoalReached (например, старые данные до
+    // этого исправления), оставляем запись и здесь как подстраховку.
+    if (wasAchieved && !goal.wishRecorded) {
       _wishHistory.insert(0, {
         'title': goal.goalTitle,
         'amount': goal.targetAmount,
@@ -1929,6 +1844,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         goals[index].targetDate = null;
         goals[index].currency = '₽';
         goals[index].history = [];
+        goals[index].wishRecorded = false;
       });
       await _saveGoalData(index);
       _showAppSnackBar(wasAchieved ? 'Цель удалена и сохранена в истории желаний' : 'Цель сброшена');
@@ -3914,7 +3830,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       context,
       createAnimatedRoute(
         Scaffold(
-          backgroundColor: Theme.of(context).colorScheme.surface,
+          backgroundColor: appState.isDark ? const Color(0xFF121212) : Colors.white,
           body: SafeArea(
             child: Stack(
               children: [
@@ -3994,7 +3910,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final appState = MyApp.of(context)!;
     final isDark = appState.isDark;
-    final colorScheme = Theme.of(context).colorScheme;
     final fullName = widget.userLastName.isNotEmpty ? '${widget.userName} ${widget.userLastName}' : widget.userName;
     final bool onAddSlide = currentGoalIndex >= goals.length;
 
@@ -4010,7 +3925,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             gradient: LinearGradient(
               colors: [
                 appState.primaryColor.withOpacity(0.35),
-                colorScheme.surface,
+                isDark ? const Color(0xFF121212) : const Color(0xFFFBF8FF),
               ],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
@@ -4060,7 +3975,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         width: double.infinity,
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerHigh,
+                          color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                           borderRadius: BorderRadius.circular(24),
                           boxShadow: [
                             if (!isDark)
@@ -4102,7 +4017,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: colorScheme.surfaceContainerHigh,
+                        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                         borderRadius: BorderRadius.circular(24),
                         boxShadow: [
                           if (!isDark)
@@ -4175,38 +4090,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             '${goal.currentAmount.toInt()} / ${goal.targetAmount.toInt()} ${goal.currency}',
                             style: TextStyle(fontSize: 18, color: appState.primaryColor, fontWeight: FontWeight.bold),
                           ),
-                          const SizedBox(height: 8),
-                          // Наглядный прогресс-бар накопления — доля от цели,
-                          // с процентом справа; безопасно к targetAmount == 0.
-                          Builder(builder: (context) {
-                            final double progress = goal.targetAmount > 0
-                                ? (goal.currentAmount / goal.targetAmount).clamp(0.0, 1.0).toDouble()
-                                : 0.0;
-                            return Row(
-                              children: [
-                                Expanded(
-                                  child: ClipRRect(
-                                    borderRadius: BorderRadius.circular(20),
-                                    child: LinearProgressIndicator(
-                                      value: progress,
-                                      minHeight: 8,
-                                      backgroundColor: appState.primaryColor.withOpacity(0.12),
-                                      valueColor: AlwaysStoppedAnimation<Color>(appState.primaryColor),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  '${(progress * 100).toStringAsFixed(0)}%',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: appState.primaryColor,
-                                  ),
-                                ),
-                              ],
-                            );
-                          }),
                         ],
                       ),
                     ),
@@ -4244,7 +4127,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       width: currentGoalIndex == index ? 16 : 8,
                       height: 8,
                       decoration: BoxDecoration(
-                        color: currentGoalIndex == index ? appState.primaryColor : colorScheme.surfaceContainerHighest,
+                        color: currentGoalIndex == index ? appState.primaryColor : Colors.grey.withOpacity(0.4),
                         borderRadius: BorderRadius.circular(4),
                       ),
                     ),
@@ -4377,16 +4260,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   width: double.infinity,
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHigh,
+                    color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: goals[currentGoalIndex].history.isEmpty
-                      ? Center(
+                      ? const Center(
                           child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 12.0),
+                            padding: EdgeInsets.symmetric(vertical: 12.0),
                             child: Text(
                               'Операций пока нет',
-                              style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
+                              style: TextStyle(color: Colors.grey, fontSize: 14),
                             ),
                           ),
                         )
@@ -4518,12 +4401,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               ),
                               child: Text(
                                 'Нажмите «+», чтобы добавить новую цель',
-                                style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 13),
+                                style: TextStyle(color: Colors.grey[600], fontSize: 13),
                               ),
                             ),
                           ),
                           const SizedBox(height: 24),
-                          ],
+                        ],
                       ),
               ),
             ),
@@ -4533,7 +4416,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: colorScheme.surfaceContainer,
+                color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
                 borderRadius: BorderRadius.circular(24),
               ),
               child: Column(
@@ -4545,22 +4428,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 4),
-                  Text(
+                  const Text(
                     'Приложение абсолютно бесплатное и без подписок!',
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                   const SizedBox(height: 16),
                   OutlinedButton(
                     style: OutlinedButton.styleFrom(
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      side: BorderSide(color: colorScheme.outline),
+                      side: BorderSide(color: isDark ? Colors.white38 : Colors.grey[700]!),
                       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                     ),
                     onPressed: _devModeEnabled ? null : _showSupportModal,
                     child: Text(
                       _devModeEnabled ? 'Недоступно (вы разработчик)' : 'Отправить донат',
-                      style: TextStyle(color: colorScheme.onSurface, fontWeight: FontWeight.w600),
+                      style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
                     ),
                   )
                 ],
@@ -4575,7 +4458,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: colorScheme.surfaceContainer,
+                color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF7F2FA),
                 borderRadius: BorderRadius.circular(24),
               ),
               child: Column(
@@ -4587,16 +4470,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 4),
-                  Text(
+                  const Text(
                     'Сообщайте о багах, делитесь идеями и следите за обновлениями!',
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                   const SizedBox(height: 16),
                   OutlinedButton(
                     style: OutlinedButton.styleFrom(
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      side: BorderSide(color: colorScheme.outline),
+                      side: BorderSide(color: isDark ? Colors.white38 : Colors.grey[700]!),
                       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                     ),
                     onPressed: _devModeEnabled
@@ -4604,7 +4487,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         : _showMessageDeveloperModal,
                     child: Text(
                       _devModeEnabled ? 'Недоступно (вы разработчик)' : 'Сообщить о баге / Идеи',
-                      style: TextStyle(color: colorScheme.onSurface, fontWeight: FontWeight.w600),
+                      style: TextStyle(color: isDark ? Colors.white : Colors.brown[800], fontWeight: FontWeight.w600),
                     ),
                   )
                 ],
@@ -4618,12 +4501,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               child: GestureDetector(
                 onTap: _handleVersionTap,
                 behavior: HitTestBehavior.opaque,
-                child: Text(
+                child: const Text(
                   'Я Коплю: мечты v.2.3 (beta)',
                   style: TextStyle(
                     fontSize: 13,
-                    color: colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w400,
+                    color: Colors.grey,
+                   fontWeight: FontWeight.w400,
                   ),
                 ),
               ),
@@ -4635,4 +4518,3 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 }
-     
