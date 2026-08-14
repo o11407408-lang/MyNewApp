@@ -188,10 +188,6 @@ void main() async {
   final colorIndex = prefs.getInt('color_index') ?? 0;
   final animationsDisabled = prefs.getBool('animations_disabled') ?? false;
   kAnimationsDisabled = animationsDisabled;
-  // (10) Ограничение списка истории операций (по 5 штук с кнопкой
-  // "Показать ещё") включено по умолчанию — пользователь может отключить
-  // его в настройках, тогда история будет показываться полностью сразу.
-  final historyPaginationEnabled = prefs.getBool('history_pagination_enabled') ?? true;
 
   runApp(MyApp(
     isRegistered: isRegistered,
@@ -200,7 +196,6 @@ void main() async {
     initialIsDark: isDark,
     initialColorIndex: colorIndex,
     initialAnimationsDisabled: animationsDisabled,
-    initialHistoryPaginationEnabled: historyPaginationEnabled,
   ));
 }
 
@@ -528,7 +523,6 @@ class MyApp extends StatefulWidget {
   final bool initialIsDark;
   final int initialColorIndex;
   final bool initialAnimationsDisabled;
-  final bool initialHistoryPaginationEnabled;
 
   const MyApp({
     super.key,
@@ -538,7 +532,6 @@ class MyApp extends StatefulWidget {
     required this.initialIsDark,
     required this.initialColorIndex,
     this.initialAnimationsDisabled = false,
-    this.initialHistoryPaginationEnabled = true,
   });
 
   static _MyAppState? of(BuildContext context) =>
@@ -555,9 +548,6 @@ class _MyAppState extends State<MyApp> {
   late String userLastName;
   late bool isRegistered;
   late bool animationsDisabled;
-  // (10) Настройка "Ограничивать историю операций" — см. переключатель в
-  // окне настроек и использование в блоке "История операций" на экране цели.
-  late bool historyPaginationEnabled;
 
   // Убран один из двух одинаковых по смыслу голубых/синих оттенков —
   // осталось 5 цветов вместо 6.
@@ -587,7 +577,6 @@ class _MyAppState extends State<MyApp> {
     isRegistered = widget.isRegistered;
     animationsDisabled = widget.initialAnimationsDisabled;
     kAnimationsDisabled = animationsDisabled;
-    historyPaginationEnabled = widget.initialHistoryPaginationEnabled;
   }
 
   Color get primaryColor =>
@@ -609,15 +598,6 @@ class _MyAppState extends State<MyApp> {
     kAnimationsDisabled = value;
     SharedPreferences.getInstance().then((prefs) {
       prefs.setBool('animations_disabled', animationsDisabled);
-    });
-  }
-
-  void toggleHistoryPagination(bool value) {
-    setState(() {
-      historyPaginationEnabled = value;
-    });
-    SharedPreferences.getInstance().then((prefs) {
-      prefs.setBool('history_pagination_enabled', historyPaginationEnabled);
     });
   }
 
@@ -652,7 +632,6 @@ class _MyAppState extends State<MyApp> {
       isDark = false;
       selectedColorIndex = 0;
       animationsDisabled = false;
-      historyPaginationEnabled = true;
     });
     kAnimationsDisabled = false;
   }
@@ -1249,6 +1228,17 @@ class _SequentialFadeSwitcherState extends State<_SequentialFadeSwitcher>
         });
         _inController.forward(from: 0.0);
       });
+    } else {
+      // (BUGFIX) Ключ не поменялся — это обычное обновление того же слайда
+      // (новая сумма, новая запись в истории операций, смена темы/цвета и
+      // т.д.). Раньше в этой ветке _currentChild вообще не обновлялся, и
+      // виджет продолжал показывать "замороженный" кадр с прежними данными
+      // и прежними цветами вплоть до следующей смены key (переключения на
+      // слайд "Добавить цель" и обратно) или перезапуска приложения — из-за
+      // этого пополнения/траты не появлялись в Истории операций сразу, а
+      // смена темы не перекрашивала кнопки пополнения и историю. Теперь
+      // просто подхватываем свежий child без анимации ухода/появления.
+      _currentChild = widget.child;
     }
   }
 
@@ -1633,6 +1623,49 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  // (11) BUGFIX: раньше цену цели можно было задним числом уменьшить ниже
+  // уже накопленной суммы (например, накопил 1000/1000, поменял цену на
+  // 999 — получалось 1000/999, чего быть не должно). Теперь такое
+  // изменение полностью блокируется, с понятным объяснением.
+  void _showTargetBelowCurrentModal(double currentAmount, double attemptedTarget, String currency) {
+    _showAppModal(
+      context: context,
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.block_rounded, size: 48, color: Colors.red),
+              const SizedBox(height: 12),
+              const Text('Так нельзя', textAlign: TextAlign.center, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(
+                'Цена цели не может быть меньше уже накопленной суммы. Сейчас накоплено ${currentAmount.toStringAsFixed(0)} $currency, а вы указали ${attemptedTarget.toStringAsFixed(0)} $currency. Укажите цену не меньше ${currentAmount.toStringAsFixed(0)} $currency, либо сначала уменьшите накопленную сумму.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _updateMoney(double delta) async {
     final goal = goals[currentGoalIndex];
     // (1) Пополнение, из-за которого баланс превысил бы цену мечты, теперь
@@ -1769,7 +1802,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _updateGoal(String newTitle, double newTarget, {double? dailyAllowance, String allowancePeriod = 'day', String? currency, DateTime? targetDate}) async {
+  Future<bool> _updateGoal(String newTitle, double newTarget, {double? dailyAllowance, String allowancePeriod = 'day', String? currency, DateTime? targetDate}) async {
+    // (11) BUGFIX: не даём установить цену цели ниже уже накопленной суммы —
+    // раньше это приводило к состоянию вида "1000/999" (накоплено больше,
+    // чем стоит цель), чего быть не должно.
+    final currentAmount = goals[currentGoalIndex].currentAmount;
+    if (newTarget > 0 && newTarget < currentAmount) {
+      _showTargetBelowCurrentModal(currentAmount, newTarget, currency ?? goals[currentGoalIndex].currency);
+      return false;
+    }
     setState(() {
       goals[currentGoalIndex].goalTitle = newTitle;
       goals[currentGoalIndex].targetAmount = newTarget;
@@ -1781,6 +1822,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     });
     _saveGoalData(currentGoalIndex);
+    return true;
   }
 
   // (2) Первую и вторую цель (index 0 и 1) теперь можно только СБРОСИТЬ —
@@ -3015,15 +3057,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         children: [
                     const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Icon(Icons.tune_rounded, size: 16, color: appState.primaryColor),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Внешний вид',
-                          style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
-                        ),
-                      ],
+                    Text(
+                      'Внешний вид',
+                      style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
                     ),
                     const SizedBox(height: 8),
                     SwitchListTile(
@@ -3061,18 +3097,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         appState.toggleAnimations(val);
                       },
                     ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Ограничивать историю операций'),
-                      subtitle: const Text(
-                        'Показывать по 5 операций с кнопкой «Показать ещё»',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                      value: appState.historyPaginationEnabled,
-                      onChanged: (val) {
-                        appState.toggleHistoryPagination(val);
-                      },
-                    ),
                     const SizedBox(height: 20),
                     const Text('Выберите цвет темы', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
                     const SizedBox(height: 12),
@@ -3106,15 +3130,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    Row(
-                      children: [
-                        Icon(Icons.bolt_rounded, size: 16, color: appState.primaryColor),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Действия',
-                          style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
-                        ),
-                      ],
+                    Text(
+                      'Действия',
+                      style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
@@ -3346,25 +3364,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ],
               ),
               const SizedBox(height: 16),
-              _goalInfoRow('Название', goal.goalTitle),
-              _goalInfoRow('Накоплено', '${goal.currentAmount.toInt()} ${goal.currency}'),
-              _goalInfoRow('Цель', '${goal.targetAmount.toInt()} ${goal.currency}'),
-              // (10) Раньше "Осталось накопить" (деньги) и "Осталось копить"
-              // (срок) назывались по-разному. Теперь оба пункта называются
-              // одинаково — "Осталось копить" — а разница между ними видна
-              // по пояснению в скобках: (Деньги) и (Дата).
-              _goalInfoRow('Осталось копить (Деньги)', '${remaining > 0 ? remaining.toInt() : 0} ${goal.currency}'),
-              if (goal.dailyAllowance != null && goal.dailyAllowance! > 0)
-                _goalInfoRow(
-                  'Карманные',
-                  '${goal.dailyAllowance!.toInt()} ${goal.currency} ${allowancePeriodLabel(goal.allowancePeriod)}',
-                ),
-              if (estimate != null) _goalInfoRow('Осталось копить (Дата)', estimate),
+              // (BUGFIX) Пункты выстроены по алфавиту: Желаемая дата,
+              // Карманные, Название, Накоплено, Осталось копить (Дата),
+              // Осталось копить (Деньги), Цель.
               if (goal.targetDate != null)
                 _goalInfoRow(
                   'Желаемая дата',
                   '${goal.targetDate!.day.toString().padLeft(2, '0')}.${goal.targetDate!.month.toString().padLeft(2, '0')}.${goal.targetDate!.year}',
                 ),
+              if (goal.dailyAllowance != null && goal.dailyAllowance! > 0)
+                _goalInfoRow(
+                  'Карманные',
+                  '${goal.dailyAllowance!.toInt()} ${goal.currency} ${allowancePeriodLabel(goal.allowancePeriod)}',
+                ),
+              _goalInfoRow('Название', goal.goalTitle),
+              _goalInfoRow('Накоплено', '${goal.currentAmount.toInt()} ${goal.currency}'),
+              // (10) Раньше "Осталось накопить" (деньги) и "Осталось копить"
+              // (срок) назывались по-разному. Теперь оба пункта называются
+              // одинаково — "Осталось копить" — а разница между ними видна
+              // по пояснению в скобках: (Деньги) и (Дата).
+              if (estimate != null) _goalInfoRow('Осталось копить (Дата)', estimate),
+              _goalInfoRow('Осталось копить (Деньги)', '${remaining > 0 ? remaining.toInt() : 0} ${goal.currency}'),
+              _goalInfoRow('Цель', '${goal.targetAmount.toInt()} ${goal.currency}'),
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
@@ -3439,7 +3460,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       children: [
                         Expanded(
                           child: Text(
-                            'Изменить цель "${goal.goalTitle}"',
+                            'Изменить цель «${goal.goalTitle}»',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
@@ -3598,14 +3619,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ),
                           ),
                         ),
-                        if (selectedTargetDate != null) ...[
-                          const SizedBox(width: 8),
-                          IconButton(
-                            onPressed: () => setModalState(() => selectedTargetDate = null),
-                            icon: const Icon(Icons.close_rounded),
-                            color: Colors.grey,
+                        // (BUGFIX) Кнопка очистки даты раньше появлялась и
+                        // пропадала резко (обычный if в списке children).
+                        // Теперь её исчезновение анимировано — плавное
+                        // затухание с уменьшением масштаба.
+                        AnimatedSwitcher(
+                          duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 200),
+                          transitionBuilder: (child, animation) => FadeTransition(
+                            opacity: animation,
+                            child: ScaleTransition(scale: animation, child: child),
                           ),
-                        ],
+                          child: selectedTargetDate != null
+                              ? Padding(
+                                  key: const ValueKey('clear_target_date_btn'),
+                                  padding: const EdgeInsets.only(left: 8),
+                                  child: IconButton(
+                                    onPressed: () => setModalState(() => selectedTargetDate = null),
+                                    icon: const Icon(Icons.close_rounded),
+                                    color: Colors.grey,
+                                  ),
+                                )
+                              : const SizedBox.shrink(key: ValueKey('clear_target_date_btn_empty')),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 20),
@@ -3618,13 +3653,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                         ),
-                        onPressed: () {
+                        onPressed: () async {
                           final newTitle = titleController.text.trim();
                           final newTarget = double.tryParse(targetController.text.trim()) ?? goal.targetAmount;
                           final allowanceText = allowanceController.text.trim();
                           final newAllowance = allowanceText.isEmpty ? null : double.tryParse(allowanceText);
                           if (newTitle.isNotEmpty && newTarget >= 0) {
-                            _updateGoal(
+                            // (11) BUGFIX: если новая цена меньше уже
+                            // накопленной суммы, _updateGoal вернёт false и
+                            // сама покажет предупреждение — модалку
+                            // редактирования в этом случае не закрываем,
+                            // чтобы пользователь мог исправить значение.
+                            final success = await _updateGoal(
                               newTitle,
                               newTarget,
                               dailyAllowance: newAllowance,
@@ -3632,7 +3672,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               currency: selectedCurrency,
                               targetDate: selectedTargetDate,
                             );
-                            Navigator.pop(context);
+                            if (success && context.mounted) {
+                              Navigator.pop(context);
+                            }
                           }
                         },
                         child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
@@ -4167,6 +4209,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         children: [
               Row(
                 children: [
+                  // (9) Кнопка "Изменить" перемещена в начало ряда, вплотную
+                  // к кнопке "Пополнить" — раньше была в конце, после
+                  // "Потратил". Ширина "Пополнить"/"Потратил" не менялась.
+                  GestureDetector(
+                    onTap: _showEditGoalModal,
+                    child: Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: appState.primaryColor,
+                        // (10) Круглая кнопка заменена на квадратную со
+                        // скруглёнными углами.
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: const Icon(Icons.edit_outlined, color: Colors.white, size: 20),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   Expanded(
                     flex: 3,
                     child: SizedBox(
@@ -4207,15 +4267,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold),
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: _showEditGoalModal,
-                    child: CircleAvatar(
-                      radius: 24,
-                      backgroundColor: appState.primaryColor,
-                      child: const Icon(Icons.edit_outlined, color: Colors.white, size: 20),
                     ),
                   ),
                 ],
@@ -4276,11 +4327,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       : Builder(
                           builder: (context) {
                             final fullHistory = goals[currentGoalIndex].history;
-                            // (10) Если ограничение включено в настройках и
-                            // операций больше 5 — показываем только первые
-                            // _historyVisibleCount штук (по умолчанию 5),
-                            // с кнопкой "Показать ещё" под списком.
-                            final limitEnabled = appState.historyPaginationEnabled;
+                            // (10) Ограничение истории операций теперь всегда
+                            // включено без возможности отключить в
+                            // настройках — показываем первые
+                            // _historyVisibleCount штук (по умолчанию 5), с
+                            // кнопкой "Показать ещё" под списком.
+                            const limitEnabled = true;
                             final visibleCount = limitEnabled
                                 ? (_historyVisibleCount < fullHistory.length
                                     ? _historyVisibleCount
@@ -4506,7 +4558,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   style: TextStyle(
                     fontSize: 13,
                     color: Colors.grey,
-                   fontWeight: FontWeight.w400,
+                    fontWeight: FontWeight.w400,
                   ),
                 ),
               ),
