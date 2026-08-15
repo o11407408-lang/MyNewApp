@@ -3258,7 +3258,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   Expanded(
                                     child: AnimatedSwitcher(
                                       duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 200),
-                                      alignment: Alignment.centerLeft,
+                                      layoutBuilder: (currentChild, previousChildren) => Stack(
+                                        alignment: Alignment.centerLeft,
+                                        children: [
+                                          ...previousChildren,
+                                          if (currentChild != null) currentChild,
+                                        ],
+                                      ),
                                       transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
                                       child: Text(
                                         selectedTargetDate != null
@@ -4134,4 +4140,3 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 }
-              
