@@ -12,24 +12,8 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 
-// Глобальный флаг "Отключить анимации" (настройки → тумблер рядом с тёмной
-// темой). Читается напрямую вспомогательными функциями/виджетами, у которых
-// нет удобного доступа к appState (переходы между экранами, точки-индикаторы
-// и т.д.), поэтому хранится как простая глобальная переменная, а не только
-// внутри _MyAppState. Источник истины по-прежнему appState.animationsDisabled
-// + SharedPreferences('animations_disabled') — эта переменная лишь кэширует
-// то же значение для быстрого доступа без BuildContext.
 bool kAnimationsDisabled = false;
 
-// (4) Push/локальные уведомления полностью убраны из приложения — они
-// так и не заработали надёжно, поэтому вместо очередной попытки чинить
-// весь блок кода и UI, связанный с напоминаниями, удалён.
-
-// Код доступа к режиму разработчика больше НЕ отправляется на сервер и
-// не хранится открытым текстом — он побайтово обфусцирован (XOR)
-// прямо в коде приложения. Это не защита военного уровня (при желании
-// обфускацию можно снять реверс-инжинирингом APK), но простой текстовый
-// поиск ("838995") по декомпилированному коду больше ничего не найдёт.
 const List<int> _obfuscatedDevCode = [23, 28, 23, 22, 22, 26];
 const int _devCodeXorKey = 47;
 
@@ -37,11 +21,6 @@ String _decodedDevCode() {
   return String.fromCharCodes(_obfuscatedDevCode.map((b) => b ^ _devCodeXorKey));
 }
 
-// (7) Быстрая проверка реального соединения с интернетом через
-// принудительное серверное обращение к Firestore (без локального кэша).
-// Используется там, где "пустой" список Firestore-стрима иначе не
-// отличить от "нет сети": в обоих случаях снапшот приходит с 0
-// документов, а пользователю нужно понимать разницу.
 Future<bool> _hasInternetConnection() async {
   try {
     await FirebaseFirestore.instance
@@ -55,10 +34,6 @@ Future<bool> _hasInternetConnection() async {
   }
 }
 
-// --- Счётчик уникальных установок приложения (через Firestore) ---
-// Идентификатор устройства (Android ID / iOS identifierForVendor)
-// используется как ключ документа, поэтому повторная установка на то
-// же самое устройство (после удаления) не увеличивает счётчик снова.
 Future<String?> _getDeviceId() async {
   try {
     final deviceInfoPlugin = DeviceInfoPlugin();
@@ -90,8 +65,6 @@ Future<void> _trackAppInstall() async {
     await firestore.runTransaction((transaction) async {
       final installSnap = await transaction.get(installDocRef);
       if (installSnap.exists) {
-        // Это устройство уже учтено ранее (даже если приложение удаляли
-        // и ставили заново) — повторно не считаем.
         return;
       }
       final statsSnap = await transaction.get(statsDocRef);
@@ -109,17 +82,8 @@ Future<void> _trackAppInstall() async {
   }
 }
 
-// Порог неактивности в днях: если пользователь месяц не заходил в
-// приложение, устройство считается "отписавшимся" для статистики.
 const int _inactivityThresholdDays = 30;
 
-// Учитывает неактивность пользователя в статистике разработчика: если с
-// последнего входа прошёл месяц (и дольше), устройство сначала списывается
-// из счётчика скачиваний (минус 1), как будто оно "отписалось". Дальше, раз
-// приложение всё же открыли (и есть интернет), оно тут же снова
-// засчитывается как новое устройство через _trackAppInstall() — при этом
-// локальные данные пользователя (цели, история и т.д.) никак не трогаются
-// и не сбрасываются.
 Future<void> _handleInactivityAndInstallTracking() async {
   try {
     final prefs = await SharedPreferences.getInstance();
@@ -147,9 +111,6 @@ Future<void> _handleInactivityAndInstallTracking() async {
     }
 
     await prefs.setInt('last_open_ms', now);
-    // Устройство либо новое, либо было только что списано выше из-за
-    // неактивности — в обоих случаях документ installs/{deviceId} не
-    // существует, поэтому это снова засчитается как новое скачивание.
     await _trackAppInstall();
   } catch (e) {
     // ignore: avoid_print
@@ -159,9 +120,6 @@ Future<void> _handleInactivityAndInstallTracking() async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Firebase нужен для режима разработчика (пожертвования видны на всех
-  // устройствах). Если проект ещё не настроен через `flutterfire configure`,
-  // оборачиваем в try/catch, чтобы остальное приложение работало без сбоев.
   try {
     await Firebase.initializeApp(
       options: const FirebaseOptions(
@@ -176,8 +134,6 @@ void main() async {
     // ignore: avoid_print
     print('Firebase init failed (ещё не настроен?): $e');
   }
-  // Не блокирует запуск: считает уникальные устройства в фоне и учитывает
-  // месяц неактивности (см. _handleInactivityAndInstallTracking).
   _handleInactivityAndInstallTracking();
 
   final prefs = await SharedPreferences.getInstance();
@@ -199,21 +155,6 @@ void main() async {
   ));
 }
 
-// (7) Единый способ показать всплывающее модальное окно снизу экрана.
-// Раньше почти каждый вызов использовал системный showModalBottomSheet с
-// прозрачным barrierColor и пытался нарисовать подложку (затемнение фона)
-// сам, изнутри тела окна, через OverflowBox поверх его собственных границ.
-// На экранах, где окно не растягивалось на весь экран (например, "Изменить
-// цель"), этот трюк не работал и фон за окном оставался незатемнённым.
-// Теперь показ идёт через showGeneralDialog: подложка — обычный
-// полноэкранный виджет на уровне самого диалога (а не внутри тела окна),
-// поэтому затемнение гарантированно видно позади ЛЮБОГО модального окна —
-// настроек, таблицы лидеров, доната, информации о цели и т.д. При этом
-// сохранено и усилено прежнее поведение свайпа: окно в реальном времени
-// плавно следует за пальцем и вниз, и обратно вверх (можно передумать и
-// вернуть окно на место), а прозрачность подложки меняется плавно и
-// пропорционально — как во время открытия/закрытия окна, так и во время
-// самого свайпа, без единого резкого скачка.
 Future<T?> _showAppModal<T>({
   required BuildContext context,
   required WidgetBuilder builder,
@@ -234,9 +175,6 @@ Future<T?> _showAppModal<T>({
         builder: builder,
       );
     },
-    // Свою собственную анимацию появления/затемнения строим ниже через
-    // AnimatedBuilder по тому же animation, поэтому системный transition
-    // (который иначе завернул бы всё ещё и в FadeTransition) отключаем.
     transitionBuilder: (context, animation, secondaryAnimation, child) => child,
   );
 }
@@ -261,12 +199,6 @@ class _AppModalSheet extends StatefulWidget {
 class _AppModalSheetState extends State<_AppModalSheet> with SingleTickerProviderStateMixin {
   double _dragExtent = 0;
   static const double _closeThreshold = 120;
-  // Как только принято решение закрыть окно (свайпом или через overscroll
-  // вложенного скролла), больше не даём ничему двигать _dragExtent обратно.
-  // Раньше после отпускания пальца встроенная "баллистическая" анимация
-  // возврата overscroll в 0 (у BouncingScrollPhysics) и анимация закрытия
-  // окна работали одновременно и спорили за _dragExtent — окно на кадр
-  // дёргалось вверх (откат оверскролла), и только потом уезжало вниз.
   bool _closing = false;
 
   late final AnimationController _springController;
@@ -310,8 +242,6 @@ class _AppModalSheetState extends State<_AppModalSheet> with SingleTickerProvide
   void _handleReleaseOrCancel() {
     if (_closing) return;
     if (_dragExtent > _closeThreshold && mounted && Navigator.canPop(context)) {
-      // Фиксируем решение сразу: дальше окно только продолжает уезжать
-      // вниз (см. offset в build ниже), никаких откатов вверх.
       _closing = true;
       Navigator.pop(context);
     } else {
@@ -328,28 +258,10 @@ class _AppModalSheetState extends State<_AppModalSheet> with SingleTickerProvide
   @override
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
-    // (5) Раньше AnimatedBuilder.builder пересобирал ВЕСЬ Stack, включая
-    // содержимое листа (Builder(builder: widget.builder)), на каждом кадре
-    // анимации появления — для длинных окон (настройки, таблица лидеров)
-    // это была тяжёлая пересборка 60 раз в секунду, отсюда и рывки/просадка
-    // до ~30 fps. Теперь тяжёлое содержимое строится один раз и передаётся
-    // через параметр child — на каждый кадр пересчитываются только лёгкие
-    // Transform/Opacity/цвет подложки поверх уже готового дерева, а само
-    // содержимое листа заново не строится.
     final sheetContent = SafeArea(
       top: false,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxHeight: screenHeight * 0.92),
-        // RepaintBoundary критичен для плавности: содержимое листа (у
-        // некоторых окон, например настроек, внутри есть ShaderMask для
-        // затухания списка снизу — сам по себе не самый дешёвый эффект)
-        // без этой границы перерисовывается по шейдеру заново на КАЖДЫЙ
-        // кадр анимации открытия/закрытия и драга, потому что лежит под
-        // Opacity/Transform.translate ниже по дереву. Экран с таблицей
-        // лидеров (без ShaderMask) укладывался в 120 fps, а настройки —
-        // нет. С RepaintBoundary GPU один раз кэширует содержимое как
-        // текстуру и дальше просто дёшево двигает/затемняет готовую
-        // картинку, а не пересчитывает её целиком на каждый кадр.
         child: RepaintBoundary(
           child: Material(
             color: Theme.of(context).colorScheme.surface,
@@ -366,10 +278,6 @@ class _AppModalSheetState extends State<_AppModalSheet> with SingleTickerProvide
       animation: widget.animation,
       child: sheetContent,
       builder: (context, child) {
-        // entrance идёт 0 -> 1 при появлении и обратно при закрытии —
-        // именно от него, а не только от драга, зависит затемнение подложки,
-        // поэтому оно плавно нарастает при открытии и плавно спадает при
-        // закрытии, а не появляется/исчезает рывком.
         final entrance = Curves.easeOutCubic.transform(widget.animation.value.clamp(0.0, 1.0));
         final dragProgress = (_dragExtent / (screenHeight * 0.6)).clamp(0.0, 1.0);
         final barrierOpacity = 0.55 * entrance * (1 - dragProgress);
@@ -406,21 +314,10 @@ class _AppModalSheetState extends State<_AppModalSheet> with SingleTickerProvide
                         if (notification is OverscrollNotification && notification.overscroll < 0) {
                           _updateDrag(-notification.overscroll);
                         } else if (notification is ScrollEndNotification && _dragExtent > 0) {
-                          // Палец отпущен над вложенным списком (список
-                          // "выигрывает" жест перетаскивания у внешнего
-                          // GestureDetector) — раньше в этом случае
-                          // onVerticalDragEnd просто не вызывался, и решение
-                          // "закрыть/вернуть на место" не принималось вовсе;
-                          // окно просто зависало в оттянутом состоянии, пока
-                          // физика списка не откатывала оверскролл обратно.
                           _handleReleaseOrCancel();
                         }
                         return false;
                       },
-                      // AnimatedBuilder передаёт child как Widget? — здесь он
-                      // гарантированно не null (мы всегда задаём child:
-                      // sheetContent при вызове AnimatedBuilder), поэтому
-                      // безопасно разворачиваем через child!.
                       child: child!,
                     ),
                   ),
@@ -434,10 +331,6 @@ class _AppModalSheetState extends State<_AppModalSheet> with SingleTickerProvide
   }
 }
 
-
-// (3) Короткое всплывающее уведомление снизу экрана (замена стандартного
-// SnackBar): появляется, поднимаясь снизу и проявляясь, а через паузу
-// явно "уплывает" вниз и растворяется — вместо мгновенного исчезновения.
 class _FlyingToast extends StatefulWidget {
   final String message;
   final Color backgroundColor;
@@ -475,8 +368,6 @@ class _FlyingToastState extends State<_FlyingToast> with SingleTickerProviderSta
   Future<void> _scheduleDismiss() async {
     await Future.delayed(const Duration(seconds: 2));
     if (!mounted) return;
-    // Проигрываем анимацию появления в обратном порядке — тост уходит
-    // вниз экрана и растворяется, а не исчезает мгновенно.
     await _controller.reverse();
     if (!mounted) return;
     widget.onDismissed();
@@ -549,8 +440,6 @@ class _MyAppState extends State<MyApp> {
   late bool isRegistered;
   late bool animationsDisabled;
 
-  // Убран один из двух одинаковых по смыслу голубых/синих оттенков —
-  // осталось 5 цветов вместо 6.
   final List<Color> lightColors = [
     Colors.red,
     Colors.orange,
@@ -641,9 +530,6 @@ class _MyAppState extends State<MyApp> {
     return MaterialApp(
       title: 'Я Коплю: мечты',
       debugShowCheckedModeBanner: false,
-      // (4) Весь стандартный UI (в т.ч. системные диалоги вроде выбора
-      // времени) теперь тоже на русском — приложение всегда открывается
-      // на русской локали, независимо от языка телефона.
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
@@ -655,9 +541,6 @@ class _MyAppState extends State<MyApp> {
       ],
       locale: const Locale('ru'),
       builder: (context, child) {
-        // Сообщаем всему дереву (в т.ч. системным виджетам, которые сами
-        // проверяют MediaQuery.disableAnimations), что анимации выключены
-        // пользователем.
         return MediaQuery(
           data: MediaQuery.of(context).copyWith(disableAnimations: animationsDisabled),
           child: child!,
@@ -677,9 +560,6 @@ class _MyAppState extends State<MyApp> {
 }
 
 Route createAnimatedRoute(Widget page) {
-  // При включённом "Отключить анимации" переход происходит мгновенно, без
-  // fade/scale — но всё равно через PageRouteBuilder, чтобы поведение
-  // (например, жест "назад" на iOS) осталось прежним.
   if (kAnimationsDisabled) {
     return PageRouteBuilder(
       pageBuilder: (context, animation, secondaryAnimation) => page,
@@ -786,17 +666,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   children: [
                     const Text('Давай знакомиться', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                     const SizedBox(height: 12),
-                    // (6) До выбора цвета темы поля должны выглядеть нейтрально-
-                    // серыми — раньше рамка/лейбл уже были окрашены в цвет темы
-                    // "по умолчанию" (индекс 0 в appState), хотя пользователь
-                    // ещё ничего не выбирал. Используем canContinue (= цвет уже
-                    // выбран) как признак того, что можно красить в цвет темы.
                     TextField(
                       controller: _nameController,
-                      // (1) cursorColor не был задан явно — курсор брал
-                      // цвет темы приложения "по умолчанию" из глобального
-                      // Theme (обычно тёмно-красный/коричневый), даже когда
-                      // рамка и лейбл уже правильно были серыми до выбора.
                       cursorColor: canContinue
                           ? _featureColor(appState, isDark)
                           : (isDark ? Colors.grey[400] : Colors.grey[600]),
@@ -937,7 +808,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
   }
 
-  // Пока цвет темы не выбран, иконки функций серые (как иконка-заглушка сверху)
   Color _featureColor(_MyAppState appState, bool isDark) {
     if (tempSelectedColorIndex == null) return Colors.grey;
     return isDark ? appState.darkColors[tempSelectedColorIndex!] : appState.lightColors[tempSelectedColorIndex!];
@@ -976,45 +846,65 @@ class WelcomeGreetingScreen extends StatelessWidget {
 
     return Scaffold(
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              const Spacer(),
-              CircleAvatar(
-                radius: 35,
-                backgroundColor: appState.primaryColor.withOpacity(0.15),
-                child: Icon(Icons.waving_hand_rounded, size: 36, color: appState.primaryColor),
-              ),
-              const SizedBox(height: 20),
-              Center(
-                child: Text(
-                  'Здравствуйте, $fullName!',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
-                ),
-              ),
-              const Spacer(),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: appState.primaryColor,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Stack(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                children: [
+                  const Spacer(),
+                  CircleAvatar(
+                    radius: 35,
+                    backgroundColor: appState.primaryColor.withOpacity(0.15),
+                    child: Icon(Icons.waving_hand_rounded, size: 36, color: appState.primaryColor),
                   ),
-                  onPressed: () {
-                    Navigator.pushReplacement(
-                      context,
-                      createAnimatedRoute(HomeScreen(userName: userName, userLastName: userLastName)),
-                    );
-                  },
-                  child: const Text('Продолжить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                ),
+                  const SizedBox(height: 20),
+                  Center(
+                    child: Text(
+                      'Здравствуйте, $fullName!',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const Spacer(),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: appState.primaryColor,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      ),
+                      onPressed: () {
+                        Navigator.pushReplacement(
+                          context,
+                          createAnimatedRoute(HomeScreen(userName: userName, userLastName: userLastName)),
+                        );
+                      },
+                      child: const Text('Продолжить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+            Positioned(
+              top: 4,
+              left: 4,
+              child: IconButton(
+                icon: Icon(
+                  Icons.arrow_back_rounded,
+                  color: appState.isDark ? Colors.white : Colors.black87,
+                ),
+                onPressed: () {
+                  Navigator.pushReplacement(
+                    context,
+                    createAnimatedRoute(const OnboardingScreen()),
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1028,20 +918,9 @@ class GoalData {
   List<String> history;
   String? imagePath;
   double? dailyAllowance;
-  // Период, за который начисляется сумма из dailyAllowance:
-  // 'day' | 'week' | 'month' | 'year'. По умолчанию 'day' — как было раньше.
   String allowancePeriod;
   String currency;
-  // Желаемая дата/время, до которого хочется накопить (вплоть до часов и
-  // минут). Видна и редактируется только в настройках цели, на карточке
-  // не отображается.
   DateTime? targetDate;
-  // (BUGFIX) Флаг "мечта уже записана в Историю желаний". Раньше запись в
-  // Историю желаний происходила только при удалении/сбросе уже достигнутой
-  // цели — из-за этого пополнение, доводящее цель до 100%, никак не
-  // отражалось в Истории желаний, пока пользователь не удалял цель вручную.
-  // Теперь запись создаётся сразу при достижении цели, а этот флаг не даёт
-  // добавить её туда повторно при последующем удалении.
   bool wishRecorded;
 
   GoalData({
@@ -1058,7 +937,6 @@ class GoalData {
   });
 }
 
-// Подпись периода начисления карманных денег для интерфейса.
 String allowancePeriodLabel(String period) {
   switch (period) {
     case 'week':
@@ -1073,7 +951,6 @@ String allowancePeriodLabel(String period) {
   }
 }
 
-// Короткое название периода для чипов выбора в форме редактирования цели.
 String allowancePeriodShortLabel(String period) {
   switch (period) {
     case 'week':
@@ -1088,8 +965,6 @@ String allowancePeriodShortLabel(String period) {
   }
 }
 
-// Прибавляет один период (день/неделю/месяц/год) к дате, аккуратно
-// обрабатывая переполнение дня месяца (например, 31 января + месяц).
 DateTime addAllowancePeriod(DateTime date, String period) {
   switch (period) {
     case 'week':
@@ -1112,7 +987,6 @@ DateTime addAllowancePeriod(DateTime date, String period) {
   }
 }
 
-// Русские окончания в зависимости от числа (1 год / 2 года / 5 лет и т.д.)
 String pluralizeRu(int n, String one, String few, String many) {
   final mod10 = n % 10;
   final mod100 = n % 100;
@@ -1121,11 +995,6 @@ String pluralizeRu(int n, String one, String few, String many) {
   return many;
 }
 
-// Форматирует разницу между `from` и `to` в человекочитаемый вид:
-// "1 год 1 день", "3 месяца", "5 дней" — а если до цели остаётся меньше
-// суток, то в часах/минутах (с учётом текущего времени и часового пояса
-// устройства, т.к. используется DateTime.now(), который всегда локальный).
-// (4) Без слова "через" в начале — просто длительность.
 String formatRemainingDuration(DateTime from, DateTime to) {
   final diff = to.difference(from);
   if (diff.inHours < 24) {
@@ -1159,9 +1028,6 @@ String formatRemainingDuration(DateTime from, DateTime to) {
   return parts.join(' ');
 }
 
-// Оценка того, сколько ещё осталось копить при текущих карманных деньгах.
-// Возвращает null, если карманные не заданы, сумма 0/некорректна или цель
-// уже достигнута — тогда строка на карточке просто не показывается.
 String? estimateRemainingToGoal(GoalData goal) {
   final amount = goal.dailyAllowance;
   if (amount == null || amount <= 0) return null;
@@ -1177,13 +1043,18 @@ String? estimateRemainingToGoal(GoalData goal) {
   return formatRemainingDuration(now, target);
 }
 
-// (2) В отличие от AnimatedSwitcher (который скрещивает fade старого и
-// нового содержимого одновременно — уходящее ещё не исчезло, а новое уже
-// проступает поверх/под ним), этот виджет строго последовательный: сначала
-// целиком доигрывает уход старого содержимого (fade + лёгкий сдвиг вверх),
-// и только после этого, уже на опустевшем месте, начинает появление нового
-// (fade + лёгкий подъём снизу). Определяется смена содержимого по ключу
-// (Widget.key) переданного child — так же, как у AnimatedSwitcher.
+class _InstantPageScrollPhysics extends PageScrollPhysics {
+  const _InstantPageScrollPhysics({super.parent});
+
+  @override
+  _InstantPageScrollPhysics applyTo(ScrollPhysics? ancestor) {
+    return _InstantPageScrollPhysics(parent: buildParent(ancestor));
+  }
+
+  @override
+  SpringDescription get spring => const SpringDescription(mass: 0.01, stiffness: 1000, damping: 100);
+}
+
 class _SequentialFadeSwitcher extends StatefulWidget {
   final Widget child;
   final Duration outDuration;
@@ -1229,15 +1100,6 @@ class _SequentialFadeSwitcherState extends State<_SequentialFadeSwitcher>
         _inController.forward(from: 0.0);
       });
     } else {
-      // (BUGFIX) Ключ не поменялся — это обычное обновление того же слайда
-      // (новая сумма, новая запись в истории операций, смена темы/цвета и
-      // т.д.). Раньше в этой ветке _currentChild вообще не обновлялся, и
-      // виджет продолжал показывать "замороженный" кадр с прежними данными
-      // и прежними цветами вплоть до следующей смены key (переключения на
-      // слайд "Добавить цель" и обратно) или перезапуска приложения — из-за
-      // этого пополнения/траты не появлялись в Истории операций сразу, а
-      // смена темы не перекрашивала кнопки пополнения и историю. Теперь
-      // просто подхватываем свежий child без анимации ухода/появления.
       _currentChild = widget.child;
     }
   }
@@ -1251,9 +1113,6 @@ class _SequentialFadeSwitcherState extends State<_SequentialFadeSwitcher>
 
   @override
   Widget build(BuildContext context) {
-    // Пока старое содержимое ещё не «ушло» полностью — показываем только
-    // его анимацию исчезновения. Новое содержимое в этот момент вообще не
-    // строим, чтобы оно точно не проступало поверх уходящего.
     if (_outgoingChild != null) {
       return AnimatedBuilder(
         animation: _outController,
@@ -1301,28 +1160,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int currentGoalIndex = 0;
   final PageController _pageController = PageController();
 
-  // (10) Сколько записей истории операций сейчас показано для текущей
-  // цели — растёт на 5 при каждом нажатии "Показать ещё". Сбрасывается
-  // обратно к 5 при переключении на другую цель.
   int _historyVisibleCount = 5;
 
-  // (6) Стрим счётчика скачиваний кэшируется один раз на весь жизненный
-  // цикл экрана — раньше он создавался заново прямо внутри builder'а
-  // StreamBuilder в окне настроек, и каждый ребилд (в т.ч. от прокрутки
-  // списка настроек) пересоздавал подписку, из-за чего число на миг
-  // сменялось на "…".
   Stream<DocumentSnapshot>? _downloadsCountStreamCache;
   Stream<DocumentSnapshot> get _downloadsCountStream => _downloadsCountStreamCache ??=
       FirebaseFirestore.instance.collection('app_stats').doc('downloads').snapshots();
 
   int _nameTapCount = 0;
-  // (1) Защита от повторного открытия окна ввода кода разработчика поверх
-  // уже открытого — без этого 10 тапов по имени во время открытого окна
-  // открывали ещё одно поверх первого.
   bool _devCodeModalOpen = false;
   bool _devModeEnabled = false;
 
-  // История достигнутых/удалённых целей ("История желаний" в настройках)
   List<Map<String, dynamic>> _wishHistory = [];
 
   List<GoalData> goals = [
@@ -1332,8 +1179,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   final ImagePicker _picker = ImagePicker();
 
-  // (1) Таймер для автоначисления карманных денег "в день" ровно в 00:00
-  // (по локальному времени/часовому поясу устройства).
   Timer? _midnightAllowanceTimer;
 
   @override
@@ -1352,9 +1197,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // (1) Если приложение просто было свёрнуто (не закрыто) и полночь
-    // прошла в фоне — досчитываем при возврате, а не только при
-    // холодном запуске.
     if (state == AppLifecycleState.resumed) {
       _creditDueDailyAllowance();
       _scheduleMidnightAllowanceTimer();
@@ -1363,8 +1205,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _initHomeScreenData() async {
     await _loadAllGoals();
-    // Досчитываем пропущенные полуночи (если приложение было закрыто) и
-    // дальше держим таймер до следующей полуночи, пока приложение открыто.
     await _creditDueDailyAllowance();
     _scheduleMidnightAllowanceTimer();
   }
@@ -1379,9 +1219,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
-  // (1) Начисляет карманные "в день" за все прошедшие с последнего
-  // начисления полуночи — если приложение было закрыто несколько дней,
-  // досчитывает всё сразу, а не теряет пропущенные дни.
   Future<void> _creditDueDailyAllowance() async {
     final prefs = await SharedPreferences.getInstance();
     final today = DateUtils.dateOnly(DateTime.now());
@@ -1393,8 +1230,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
       final lastStr = prefs.getString('last_allowance_credit_$i');
       if (lastStr == null) {
-        // Точки отсчёта ещё нет (например, старые данные без этого поля) —
-        // фиксируем сегодняшний день и не начисляем задним числом.
         await prefs.setString('last_allowance_credit_$i', today.toIso8601String());
         continue;
       }
@@ -1412,7 +1247,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  // Автоназвания для новых целей, которые пользователь добавляет через "+"
   String _ordinalGoalName(int number) {
     const names = {
       1: 'Первая мечта',
@@ -1482,8 +1316,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (goals[index].dailyAllowance != null) {
       await prefs.setDouble('daily_allowance_$index', goals[index].dailyAllowance!);
       await prefs.setString('allowance_period_$index', goals[index].allowancePeriod);
-      // (1) Если карманные заданы именно "в день" — обеспечиваем точку
-      // отсчёта для автоначисления в полночь, не начисляя задним числом.
       if (goals[index].allowancePeriod == 'day') {
         if (!prefs.containsKey('last_allowance_credit_$index')) {
           await prefs.setString('last_allowance_credit_$index', DateUtils.dateOnly(DateTime.now()).toIso8601String());
@@ -1505,15 +1337,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await prefs.setBool('wish_recorded_$index', goals[index].wishRecorded);
   }
 
-  // (7) Сохраняем список "История желаний"
   Future<void> _saveWishHistory() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = _wishHistory.map((e) => jsonEncode(e)).toList();
     await prefs.setStringList('wish_history', raw);
   }
 
-  // (3) Максимум 10 целей одновременно — после достижения лимита кнопка
-  // (слайд) добавления новой цели скрывается.
   static const int _maxGoals = 10;
   bool get _canAddMoreGoals => goals.length < _maxGoals;
 
@@ -1526,28 +1355,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       goalTitle: _ordinalGoalName(newIndex + 1),
       history: [],
     );
-    // (3) После добавления слайд "Добавить цель" просто сдвигается на одну
-    // позицию вперёд (новая цель встаёт на его прежнее место) — мы остаёмся
-    // именно на этом слайде, а не перепрыгиваем на только что созданную
-    // цель. Так можно быстро добавить подряд несколько целей, не покидая
-    // экран добавления между нажатиями.
     final stillCanAdd = goals.length + 1 < _maxGoals;
     final addSlideIndex = stillCanAdd ? newIndex + 1 : newIndex;
     setState(() {
       goals.add(newGoal);
       currentGoalIndex = addSlideIndex;
     });
-    // (1) Анимацию перехода запускаем СРАЗУ следующей строкой, синхронно
-    // после setState — а не после await SharedPreferences, как было раньше.
-    // Раньше между setState и стартом animateToPage стояли реальные async-
-    // задержки на запись в SharedPreferences, и Flutter успевал отрисовать
-    // и показать пользователю «осевший» кадр: PageView ещё стоит на старой
-    // странице, но на ней уже отрендерена только что созданная цель (эта
-    // страница перестала быть слайдом «Добавить цель», как только goals
-    // выросли), — отсюда и мелькание чужой цели на секунду. Теперь both
-    // шага идут в одном кадре, и пользователь сразу видит именно плавный
-    // анимированный переезд на слайд «Добавить цель», без промежуточного
-    // мелькания.
     if (_pageController.hasClients) {
       _pageController.animateToPage(
         addSlideIndex,
@@ -1555,9 +1368,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         curve: Curves.easeInOut,
       );
     } else {
-      // Контроллер ещё не подключён к PageView (крайне маловероятно, ведь
-      // кнопка живёт прямо внутри него, но на всякий случай подстрахуемся) —
-      // выставляем страницу без анимации сразу же, как только он появится.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_pageController.hasClients) {
           _pageController.jumpToPage(addSlideIndex);
@@ -1579,10 +1389,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  // (1) Предупреждение в стиле подтверждения удаления цели (красная иконка,
-  // крупный заголовок, серая подпись) — показывается, когда пользователь
-  // пытается пополнить копилку на сумму, из-за которой баланс превысит
-  // цену мечты.
   void _showExceedsTargetModal() {
     final goal = goals[currentGoalIndex];
     _showAppModal(
@@ -1623,11 +1429,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // (11) BUGFIX: раньше цену цели можно было задним числом уменьшить ниже
-  // уже накопленной суммы (например, накопил 1000/1000, поменял цену на
-  // 999 — получалось 1000/999, чего быть не должно). Теперь такое
-  // изменение полностью блокируется, с понятным объяснением.
-  void _showTargetBelowCurrentModal(double currentAmount, double attemptedTarget, String currency) {
+  void _showTargetBelowCurrentModal(double currentAmount, String currency) {
     _showAppModal(
       context: context,
       builder: (context) {
@@ -1641,7 +1443,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const Text('Так нельзя', textAlign: TextAlign.center, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               Text(
-                'Цена цели не может быть меньше уже накопленной суммы. Сейчас накоплено ${currentAmount.toStringAsFixed(0)} $currency, а вы указали ${attemptedTarget.toStringAsFixed(0)} $currency. Укажите цену не меньше ${currentAmount.toStringAsFixed(0)} $currency, либо сначала уменьшите накопленную сумму.',
+                'Цена цели не может быть меньше уже накопленного (${currentAmount.toStringAsFixed(0)} $currency).',
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 14, color: Colors.grey),
               ),
@@ -1668,19 +1470,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _updateMoney(double delta) async {
     final goal = goals[currentGoalIndex];
-    // (1) Пополнение, из-за которого баланс превысил бы цену мечты, теперь
-    // полностью блокируется (деньги не добавляются ни под цель, ни в
-    // историю операций) — вместо этого показывается предупреждение.
-    // Списание (delta < 0) ограничение не затрагивает.
     if (delta > 0 && goal.targetAmount > 0 && goal.currentAmount + delta > goal.targetAmount) {
       _showExceedsTargetModal();
       return;
     }
+    if (delta < 0 && goal.currentAmount + delta < 0) {
+      _showExceedsCurrentModal(goal.currentAmount, goal.currency);
+      return;
+    }
     setState(() {
       goals[currentGoalIndex].currentAmount += delta;
-      if (goals[currentGoalIndex].currentAmount < 0) {
-        goals[currentGoalIndex].currentAmount = 0;
-      }
       final type = delta > 0 ? '+' : '-';
       final entry = '$type ${delta.abs().toStringAsFixed(0)} ${goals[currentGoalIndex].currency}';
       goals[currentGoalIndex].history.insert(0, entry);
@@ -1689,8 +1488,45 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _checkGoalReached();
   }
 
-  // (4) Удаление одной записи операции из истории — AnimatedSize, которым
-  // уже обёрнут блок истории, сам плавно анимирует уменьшение высоты.
+  void _showExceedsCurrentModal(double currentAmount, String currency) {
+    _showAppModal(
+      context: context,
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.block_rounded, size: 48, color: Colors.red),
+              const SizedBox(height: 12),
+              const Text('Так нельзя', textAlign: TextAlign.center, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(
+                'Нельзя списать больше, чем накоплено (${currentAmount.toStringAsFixed(0)} $currency).',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Понятно', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _deleteHistoryEntry(int index) async {
     setState(() {
       goals[currentGoalIndex].history.removeAt(index);
@@ -1720,10 +1556,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _checkGoalReached() {
     final goal = goals[currentGoalIndex];
     if (goal.targetAmount > 0 && goal.currentAmount >= goal.targetAmount) {
-      // (BUGFIX) Записываем мечту в "Историю желаний" сразу в момент
-      // достижения цели, а не только при последующем удалении — раньше
-      // пополнение, доводящее до 100%, никак не попадало в Историю
-      // желаний, если пользователь не удалял цель вручную.
       if (!goal.wishRecorded) {
         setState(() {
           goal.wishRecorded = true;
@@ -1755,14 +1587,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         Icon(Icons.emoji_events_rounded, size: 100, color: appState.primaryColor),
                         const SizedBox(height: 24),
                         Text(
-                          'Поздравляю с достижением цели, ${widget.userName}',
+                          'Поздравляю\nс достижением цели, ${widget.userName}',
                           textAlign: TextAlign.center,
                           style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 12),
-                        const Text(
-                          'Ты молодец!',
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: appState.primaryColor.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Text(
+                            'Ты молодец!',
+                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
                         ),
                         const Spacer(),
                         SizedBox(
@@ -1781,7 +1620,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ],
                     ),
                   ),
-                  // (2) Кнопка "назад" в левом верхнем углу
                   Positioned(
                     top: 4,
                     left: 4,
@@ -1803,12 +1641,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<bool> _updateGoal(String newTitle, double newTarget, {double? dailyAllowance, String allowancePeriod = 'day', String? currency, DateTime? targetDate}) async {
-    // (11) BUGFIX: не даём установить цену цели ниже уже накопленной суммы —
-    // раньше это приводило к состоянию вида "1000/999" (накоплено больше,
-    // чем стоит цель), чего быть не должно.
     final currentAmount = goals[currentGoalIndex].currentAmount;
     if (newTarget > 0 && newTarget < currentAmount) {
-      _showTargetBelowCurrentModal(currentAmount, newTarget, currency ?? goals[currentGoalIndex].currency);
+      _showTargetBelowCurrentModal(currentAmount, currency ?? goals[currentGoalIndex].currency);
       return false;
     }
     setState(() {
@@ -1825,14 +1660,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return true;
   }
 
-  // (2) Первую и вторую цель (index 0 и 1) теперь можно только СБРОСИТЬ —
-  // сам слот остаётся в списке. Третью и последующие цели (index >= 2)
-  // можно удалить полностью — слот убирается из списка, а данные всех
-  // целей после неё сдвигаются на одну позицию вниз, чтобы не оставалось
-  // "дыр" в хранилище SharedPreferences.
-  //
-  // Если цель была достигнута — в обоих случаях сохраняем её в "Историю
-  // желаний" перед сбросом/удалением.
   bool _isResetOnlyGoal(int index) => index < 2;
 
   Future<void> _removeGoalPrefsAt(SharedPreferences prefs, int index) async {
@@ -1852,11 +1679,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _deleteGoal(int index) async {
     final goal = goals[index];
     final wasAchieved = goal.targetAmount > 0 && goal.currentAmount >= goal.targetAmount;
-    // (BUGFIX) Если мечта уже была записана в Историю желаний в момент
-    // достижения цели (см. _checkGoalReached), повторно не дублируем запись
-    // при удалении/сбросе — но на случай, если цель почему-то была
-    // достигнута в обход _checkGoalReached (например, старые данные до
-    // этого исправления), оставляем запись и здесь как подстраховку.
     if (wasAchieved && !goal.wishRecorded) {
       _wishHistory.insert(0, {
         'title': goal.goalTitle,
@@ -1869,8 +1691,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
 
     if (_isResetOnlyGoal(index)) {
-      // Первая/вторая цель — только сброс к стандартным значениям, слот
-      // остаётся на своём месте.
       await prefs.remove('goal_image_path_$index');
       await prefs.remove('daily_allowance_$index');
       await prefs.remove('allowance_period_$index');
@@ -1893,23 +1713,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
 
-    // Третья и последующие цели — удаляются полностью из списка.
     final oldLength = goals.length;
-    // (5) Перед удалением запоминаем, у каких целей ПОСЛЕ удаляемой сейчас
-    // стандартное название вида "Пятая мечта", соответствующее их текущей
-    // позиции — это нужно, чтобы после сдвига списка вниз аккуратно
-    // переименовать именно их под новую позицию, а не задеть цели,
-    // которые пользователь назвал по-своему.
     final Map<int, bool> hadDefaultTitleAt = {
       for (int i = index + 1; i < oldLength; i++)
         i: goals[i].goalTitle == _ordinalGoalName(i + 1),
     };
     setState(() {
       goals.removeAt(index);
-      // Названия вида "Пятая мечта" пересчитываем под новую позицию у всех
-      // сдвинувшихся целей, которые ещё не были переименованы вручную —
-      // иначе после удаления, скажем, пятой цели дальше шли бы "Четвёртая
-      // мечта" и "Шестая мечта" вместо аккуратных "Четвёртая" и "Пятая".
       for (int oldI = index + 1; oldI < oldLength; oldI++) {
         if (hadDefaultTitleAt[oldI] == true) {
           final newI = oldI - 1;
@@ -1920,13 +1730,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         currentGoalIndex = goals.length - 1 < 0 ? 0 : goals.length - 1;
       }
     });
-    // Сдвигаем сохранённые данные всех целей, шедших после удалённой,
-    // на одну позицию вниз (иначе они "потеряются" за неверными ключами).
     for (int i = index; i < oldLength - 1; i++) {
       await _removeGoalPrefsAt(prefs, i);
       await _saveGoalData(i);
     }
-    // Больше нет цели с последним (теперь лишним) индексом — чистим её данные.
     await _removeGoalPrefsAt(prefs, oldLength - 1);
     await prefs.setInt('goals_count', goals.length);
     if (_pageController.hasClients) {
@@ -1935,11 +1742,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _showAppSnackBar(wasAchieved ? 'Цель удалена и сохранена в истории желаний' : 'Цель удалена');
   }
 
-  // (3) Единый стиль коротких уведомлений — закруглённые, в цвет темы,
-  // "плавающие" над низом экрана. Раньше использовался стандартный
-  // ScaffoldMessenger.showSnackBar без явной анимации исчезновения —
-  // теперь это собственный Overlay-тост, который явно "уплывает" вниз
-  // экрана и растворяется, а не пропадает резко.
   void _showAppSnackBar(String message, {bool isError = false}) {
     if (!mounted) return;
     final appState = MyApp.of(context)!;
@@ -2004,8 +1806,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // (1)+(7) Таблица лидеров: сортировка по убыванию суммы (при равенстве —
-  // по имени А-Я) и удаление доната доступно только в режиме разработчика.
   void _showLeaderboardModal() {
     _showAppModal(
       context: context,
@@ -2043,10 +1843,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     }
                     final docs = snapshot.data?.docs.toList() ?? [];
                     if (docs.isEmpty) {
-                      // (7) "Пустой список" от Firestore при отсутствии
-                      // интернета выглядит так же, как реально пустой
-                      // список — проверяем реальное соединение отдельно,
-                      // чтобы не вводить в заблуждение.
                       return FutureBuilder<bool>(
                         future: _hasInternetConnection(),
                         builder: (context, connSnapshot) {
@@ -2054,10 +1850,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             return const Center(child: CircularProgressIndicator());
                           }
                           if (connSnapshot.data == false) {
-                            // (6) Раньше было красным и жирным — слишком
-                            // тревожно для обычного отсутствия сети,
-                            // приводим к тому же спокойному серому стилю,
-                            // что и остальные статусные надписи здесь.
                             return const Center(
                               child: Text(
                                 'Нет соединения с интернетом',
@@ -2071,7 +1863,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         },
                       );
                     }
-                    // Сортировка: сумма по убыванию, при равенстве — имя А-Я
                     docs.sort((a, b) {
                       final da = a.data() as Map<String, dynamic>;
                       final db = b.data() as Map<String, dynamic>;
@@ -2140,7 +1931,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // (1) Подтверждение удаления доната (доступно только в режиме разработчика)
   void _confirmDeleteDonation(String docId) {
     _showAppModal(
       context: context,
@@ -2204,7 +1994,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // (1b) Подтверждение удаления сообщения от пользователя (только в dev-режиме)
   void _confirmDeleteMessage(String docId) {
     _showAppModal(
       context: context,
@@ -2284,8 +2073,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               const SizedBox(height: 8),
               Text('Поддержать проект', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: appState.primaryColor)),
               const SizedBox(height: 8),
-              // Номер карты виден как обычный текст, копирование — только
-              // по явной кнопке-иконке (а не по тапу в произвольном месте).
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
@@ -2330,8 +2117,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // Всплывающее окно "Сначала укажите цену мечты!" — в стиле "Поддержать
-  // проект", но с восклицательным знаком и без строки с картой (окно чуть меньше).
   void _showSetPriceFirstModal() {
     _showAppModal(
       context: context,
@@ -2368,9 +2153,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // Пасхалка: 10 тапов по имени в шапке открывают ввод кода разработчика —
-  // но только если имя пользователя указано как "Марат" (с большой буквы,
-  // без опечаток). Для всех остальных имён тапы никакого эффекта не имеют.
   void _handleNameTap() {
     if (widget.userName != 'Марат') return;
     if (_devCodeModalOpen) return;
@@ -2381,12 +2163,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  // Блокировка при переборе кода разработчика хранится не локально
-  // (SharedPreferences), а в Firestore по аппаратному ID устройства —
-  // поэтому её не сбросить ни кнопкой "Сбросить все настройки" (она чистит
-  // только SharedPreferences), ни очисткой кэша/данных приложения, ни
-  // переустановкой, ни перезагрузкой телефона: счётчик живёт на сервере и
-  // привязан к самому устройству, а не к данным приложения на нём.
   Future<DocumentReference<Map<String, dynamic>>?> _devCodeLockoutDocRef() async {
     final deviceId = await _getDeviceId();
     if (deviceId == null || deviceId.isEmpty) return null;
@@ -2397,11 +2173,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       final docRef = await _devCodeLockoutDocRef();
       if (docRef == null) return null;
-      // (7) Читаем только из локального кэша, без похода в сеть: обычный
-      // .get() без интернета (особенно если кэша ещё не было) мог бы
-      // подолгу ждать ответа сервера и блокировать вход по верному коду.
-      // Если кэша нет — Source.cache бросит исключение, которое ниже
-      // трактуется как "блокировки нет", так что офлайн-вход не страдает.
       final snap = await docRef
           .get(const GetOptions(source: Source.cache))
           .timeout(const Duration(seconds: 2));
@@ -2445,11 +2216,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       final docRef = await _devCodeLockoutDocRef();
       if (docRef == null) return;
-      // (7) У Firestore .set() Future не завершается, пока запись не
-      // подтвердит сервер — без интернета это могло надолго "подвесить"
-      // вход по верному коду прямо на этом месте. Таймаут гарантирует, что
-      // мы не ждём бесконечно: запись всё равно останется в локальной
-      // очереди и уйдёт на сервер, когда соединение появится.
       await docRef
           .set({'fail_count': 0, 'lockout_until_ms': 0})
           .timeout(const Duration(seconds: 2));
@@ -2459,26 +2225,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  // (1) Функция принудительной онлайн-проверки удалена: код разработчика
-  // проверяется полностью локально, вход больше не требует интернета.
-
   String _formatLockoutDuration(Duration d) {
     final totalMinutes = (d.inSeconds / 60).ceil();
     return '$totalMinutes ${pluralizeRu(totalMinutes, 'минуту', 'минуты', 'минут')}';
   }
 
-  // (10) Модалка ввода кода не закрывается случайно от тапа по фону
-  // (isDismissible: false) и от системного drag-хендла (enableDrag: false),
-  // но осознанный свайп вниз по-прежнему закрывает
-  // её, как и все остальные всплывающие окна — так же, как и крестик.
   void _showDevCodeModal() async {
     if (_devCodeModalOpen) return;
     _devCodeModalOpen = true;
     final codeController = TextEditingController();
     bool showWrongCodeError = false;
     String? errorMessage;
-    // Если устройство уже заблокировано с прошлого раза — сразу показываем
-    // оставшееся время, не дожидаясь новой неверной попытки.
     final existingLockout = await _devCodeLockoutRemaining();
     if (existingLockout != null) {
       showWrongCodeError = true;
@@ -2508,7 +2265,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 children: [
                   Align(
                     alignment: Alignment.centerLeft,
-                    // Небольшой сдвиг влево, чтобы крестик был ближе к краю окна
                     child: Transform.translate(
                       offset: const Offset(-14, 0),
                       child: IconButton(
@@ -2553,10 +2309,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       }
                     },
                   ),
-                  // Ошибка/блокировка — красным текстом внутри окна,
-                  // не зависит от темы (всегда красный). Сообщение
-                  // приходит с сервера (неверный код / кол-во оставшихся
-                  // попыток / временная блокировка при переборе).
                   if (showWrongCodeError) ...[
                     const SizedBox(height: 10),
                     Text(
@@ -2576,8 +2328,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                       onPressed: () async {
-                        // Проверяем блокировку заново на случай, если она
-                        // наступила уже после открытия окна.
                         final lockout = await _devCodeLockoutRemaining();
                         if (lockout != null) {
                           setModalState(() {
@@ -2587,17 +2337,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           return;
                         }
                         if (codeController.text.trim() == _decodedDevCode()) {
-                          // (1) Если уже в режиме разработчика — не
-                          // активируем повторно и не пишем "активирован",
-                          // а честно говорим, что уже вошли.
                           if (_devModeEnabled) {
                             if (context.mounted) Navigator.pop(context);
                             _showAppSnackBar('Вы уже вошли в режим разработчика!');
                             return;
                           }
-                          // (3) Проверка кода — полностью локальная, без
-                          // обращения к серверу: интернет для входа в
-                          // режим разработчика больше не требуется.
                           setModalState(() {
                             showWrongCodeError = false;
                             errorMessage = null;
@@ -2625,7 +2369,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         );
       },
     ).then((_) {
-      // Окно закрылось (любым способом) — снова разрешаем открыть его.
       _devCodeModalOpen = false;
     });
   }
@@ -2639,7 +2382,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _showAppSnackBar('Режим разработчика активирован!');
   }
 
-  // (3) Выход из режима разработчика (кнопка в настройках)
   Future<void> _disableDevMode() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('dev_mode_enabled', false);
@@ -2649,8 +2391,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _showAppSnackBar('Режим разработчика выключен');
   }
 
-  // Добавление пожертвования в общую базу (Firestore) — видно на всех
-  // устройствах, а не только локально.
   void _showAddDonationModal() {
     final donorNameController = TextEditingController();
     final donorAmountController = TextEditingController();
@@ -2725,8 +2465,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // (9) Сообщение разработчику: недоступно, если сам режим разработчика
-  // включён на этом устройстве.
   void _showMessageDeveloperModal() {
     final messageController = TextEditingController();
     _showAppModal(
@@ -2800,7 +2538,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // (9) Для разработчика: история всех сообщений от пользователей
   void _showDeveloperMessagesModal() {
     _showAppModal(
       context: context,
@@ -2831,8 +2568,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     }
                     final docs = snapshot.data?.docs ?? [];
                     if (docs.isEmpty) {
-                      // (7) Та же проверка: не путаем "сообщений пока нет"
-                      // с "нет интернета".
                       return FutureBuilder<bool>(
                         future: _hasInternetConnection(),
                         builder: (context, connSnapshot) {
@@ -2904,7 +2639,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // (6) "История желаний" — достигнутые и позже удалённые цели
   void _showWishHistoryModal() {
     _showAppModal(
       context: context,
@@ -2974,10 +2708,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _showSettingsModal() async {
-    // (1) Затухание внизу списка теперь отслеживает прокрутку: как только
-    // пользователь долистал до самого конца — прятать нечего, и градиент
-    // отключается полностью (без него список выглядит просто обрезанным
-    // по нижнему краю окна, а не "выцветшим").
     final settingsScrollController = ScrollController();
     bool showBottomFade = true;
     if (!mounted) return;
@@ -2994,28 +2724,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 left: 24,
                 right: 24,
               ),
-              // (5) Окно настроек в режиме разработчика получает дополнительные
-              // блоки (скачивания, донаты, сообщения, выход), из-за чего без
-              // ограничения высоты лист растягивался почти на весь экран.
-              // Ограничиваем максимальную высоту, чтобы окно оставалось
-              // компактным как обычно, а всё, что не поместилось, было
-              // доступно прокруткой внутри (SingleChildScrollView ниже).
               child: ConstrainedBox(
                 constraints: BoxConstraints(
-                  // (3) Раньше здесь также стоял жёсткий minHeight,
-                  // равный maxHeight, чтобы верхний край окна не "скакал"
-                  // между обычным и режимом разработчика. Но из-за этого
-                  // при коротком содержимом снизу оставалось пустое
-                  // пространство — тот самый некрасивый "подбородок" под
-                  // текстом про ИИ. Оставляем только maxHeight — окно
-                  // сжимается по содержимому и не тянется искусственно.
                   maxHeight: MediaQuery.of(context).size.height * 0.75,
                 ),
-                // (1) Раньше последняя строка списка обрезалась резкой
-                // линией по краю окна. ShaderMask плавно "растворяет"
-                // последние ~18px в прозрачность — короткий, ненавязчивый
-                // переход (а не треть окна), и полностью выключается, когда
-                // список докручен до конца (см. NotificationListener ниже).
                 child: NotificationListener<ScrollNotification>(
                   onNotification: (notification) {
                     final metrics = notification.metrics;
@@ -3026,30 +2738,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     }
                     return false;
                   },
-                  child: ShaderMask(
-                    shaderCallback: (rect) {
-                      if (!showBottomFade) {
-                        // Докручено до конца — градиент полностью
-                        // непрозрачный, эффект затухания не виден.
-                        return const LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Colors.black, Colors.black],
-                        ).createShader(rect);
-                      }
-                      // Совсем небольшое затухание — раньше 18px тоже
-                      // казалось многовато, теперь всего 8px.
-                      const fadeHeight = 8.0;
-                      final fadeStart = (1 - (fadeHeight / rect.height)).clamp(0.0, 1.0);
-                      return LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: const [Colors.black, Colors.black, Colors.transparent],
-                        stops: [0.0, fadeStart, 1.0],
-                      ).createShader(rect);
-                    },
-                    blendMode: BlendMode.dstIn,
-                    child: SingleChildScrollView(
+                child: Stack(
+                  children: [
+                    SingleChildScrollView(
                       controller: settingsScrollController,
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -3057,9 +2748,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         children: [
                     const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 20),
-                    Text(
-                      'Внешний вид',
-                      style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
+                    Row(
+                      children: [
+                        Icon(Icons.tune_rounded, size: 16, color: appState.primaryColor),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Внешний вид',
+                          style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     SwitchListTile(
@@ -3071,10 +2768,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                       value: appState.isDark,
                       onChanged: (val) {
-                        // (1) Тема переключается мгновенно во всём
-                        // приложении (setState в корневом MyApp), а само
-                        // окно настроек после короткой паузы закрывается
-                        // автоматически, чтобы сразу было видно результат.
                         appState.toggleTheme(val);
                         setModalState(() {});
                         Future.delayed(
@@ -3106,10 +2799,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         appState.lightColors.length,
                         (index) => GestureDetector(
                           onTap: () {
-                            // (1) Цвет темы применяется мгновенно во всём
-                            // приложении, а окно настроек после короткой
-                            // паузы (чтобы успеть увидеть галочку на
-                            // выбранном цвете) закрывается само.
                             appState.setColor(index);
                             setModalState(() {});
                             Future.delayed(
@@ -3130,9 +2819,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    Text(
-                      'Действия',
-                      style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
+                    Row(
+                      children: [
+                        Icon(Icons.bolt_rounded, size: 16, color: appState.primaryColor),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Действия',
+                          style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: appState.primaryColor),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
@@ -3149,7 +2844,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         label: const Text('Поделиться приложением', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ),
-                    // (6) История желаний — доступна всем пользователям
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
@@ -3183,13 +2877,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ],
                       ),
                       const SizedBox(height: 12),
-                      // (6) Раньше stream создавался прямо в builder этого
-                      // StreamBuilder — при каждом ребилде родителя (в т.ч.
-                      // от прокрутки списка настроек) создавался НОВЫЙ
-                      // Stream, StreamBuilder пересоздавал подписку и на миг
-                      // показывал "…" вместо уже известного числа. Теперь
-                      // стрим берётся из закэшированного один раз на всё
-                      // время открытия окна (_downloadsCountStream ниже).
                       StreamBuilder<DocumentSnapshot>(
                         stream: _downloadsCountStream,
                         builder: (context, snapshot) {
@@ -3198,10 +2885,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           final displayValue = snapshot.connectionState == ConnectionState.waiting
                               ? '…'
                               : (count?.toString() ?? '—');
-                          // (5)/(8) Такой же стиль, как у остальных пунктов
-                          // (обводка, прозрачный фон), и такое же центрирование
-                          // содержимого, как у OutlinedButton.icon ниже: иконка
-                          // слева, а не растянутые по краям Row.
                           return Container(
                             width: double.infinity,
                             height: 48,
@@ -3213,9 +2896,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                // (7) Иконка теперь той же обводочной
-                                // стилистики (outlined), что и у остальных
-                                // пунктов режима разработчика.
                                 Icon(Icons.download_outlined, size: 18, color: appState.primaryColor),
                                 const SizedBox(width: 8),
                                 Text(
@@ -3245,7 +2925,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           label: const Text('Добавить пожертвование', style: TextStyle(fontWeight: FontWeight.bold)),
                         ),
                       ),
-                      // (9) История сообщений от пользователей — только в dev-режиме
                       const SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
@@ -3264,7 +2943,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           label: const Text('Сообщения от пользователей', style: TextStyle(fontWeight: FontWeight.bold)),
                         ),
                       ),
-                      // (3) Выход из режима разработчика
                       const SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
@@ -3324,6 +3002,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      height: 8,
+                      child: IgnorePointer(
+                        child: AnimatedOpacity(
+                          duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 150),
+                          opacity: showBottomFade ? 1.0 : 0.0,
+                          child: Container(
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [Colors.transparent, Colors.black12],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 ),
               ),
@@ -3334,8 +3034,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  // (6) Модалка «Информация о цели» — открывается по кнопке-информации в
-  // правом нижнем углу карточки цели.
   void _showGoalInfoModal(GoalData goal) {
     final estimate = estimateRemainingToGoal(goal);
     final remaining = goal.targetAmount - goal.currentAmount;
@@ -3364,9 +3062,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ],
               ),
               const SizedBox(height: 16),
-              // (BUGFIX) Пункты выстроены по алфавиту: Желаемая дата,
-              // Карманные, Название, Накоплено, Осталось копить (Дата),
-              // Осталось копить (Деньги), Цель.
               if (goal.targetDate != null)
                 _goalInfoRow(
                   'Желаемая дата',
@@ -3379,10 +3074,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               _goalInfoRow('Название', goal.goalTitle),
               _goalInfoRow('Накоплено', '${goal.currentAmount.toInt()} ${goal.currency}'),
-              // (10) Раньше "Осталось накопить" (деньги) и "Осталось копить"
-              // (срок) назывались по-разному. Теперь оба пункта называются
-              // одинаково — "Осталось копить" — а разница между ними видна
-              // по пояснению в скобках: (Деньги) и (Дата).
               if (estimate != null) _goalInfoRow('Осталось копить (Дата)', estimate),
               _goalInfoRow('Осталось копить (Деньги)', '${remaining > 0 ? remaining.toInt() : 0} ${goal.currency}'),
               _goalInfoRow('Цель', '${goal.targetAmount.toInt()} ${goal.currency}'),
@@ -3466,13 +3157,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                           ),
                         ),
-                        // (3) Убрал IconButton совсем: у Material-кнопки
-                        // внутри всегда зарезервирован "холст" под тап-зону
-                        // и ripple, из-за чего сама иконка почти никогда не
-                        // лежит точно по краю бокса, сколько её ни двигай.
-                        // GestureDetector + Icon рисует иконку ровно в
-                        // границах своего size — она физически совпадает с
-                        // правым краем поля «Название цели» ниже.
                         GestureDetector(
                           onTap: () => _showGoalInfoModal(goal),
                           behavior: HitTestBehavior.opaque,
@@ -3483,9 +3167,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ),
                       ],
                     ),
-                    // (2) Между заголовком "Изменить цель ..." и полем
-                    // "Название цели" был слишком маленький отступ (4px) —
-                    // увеличен, чтобы окно не выглядело слипшимся.
                     const SizedBox(height: 16),
                     TextField(
                       controller: titleController,
@@ -3540,8 +3221,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
                       ),
                     ),
-                    // (1) Период, за который приходят карманные деньги —
-                    // день/неделя/месяц/год. По умолчанию "День", как и было.
                     const SizedBox(height: 12),
                     const Text('Как часто приходят карманные', style: TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w400)),
                     const SizedBox(height: 8),
@@ -3571,11 +3250,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         );
                       }).toList(),
                     ),
-                    // (5)/(6) Желаемая дата накопления редактируется
-                    // только здесь (в "Изменить цель"); в информации о
-                    // цели она показывается уже неизменяемым параметром.
-                    // Только дата, без конкретного времени — время не
-                    // спрашиваем и не показываем.
                     const SizedBox(height: 16),
                     const Text('Желаемая дата накопления (необязательно)', style: TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w400)),
                     const SizedBox(height: 8),
@@ -3607,11 +3281,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   Icon(Icons.event_outlined, size: 18, color: appState.primaryColor),
                                   const SizedBox(width: 10),
                                   Expanded(
-                                    child: Text(
-                                      selectedTargetDate != null
-                                          ? '${selectedTargetDate!.day.toString().padLeft(2, '0')}.${selectedTargetDate!.month.toString().padLeft(2, '0')}.${selectedTargetDate!.year}'
-                                          : 'Не выбрана',
-                                      style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
+                                    child: AnimatedSwitcher(
+                                      duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 200),
+                                      transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
+                                      child: Text(
+                                        selectedTargetDate != null
+                                            ? '${selectedTargetDate!.day.toString().padLeft(2, '0')}.${selectedTargetDate!.month.toString().padLeft(2, '0')}.${selectedTargetDate!.year}'
+                                            : 'Не выбрана',
+                                        key: ValueKey(selectedTargetDate),
+                                        style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -3619,10 +3298,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ),
                           ),
                         ),
-                        // (BUGFIX) Кнопка очистки даты раньше появлялась и
-                        // пропадала резко (обычный if в списке children).
-                        // Теперь её исчезновение анимировано — плавное
-                        // затухание с уменьшением масштаба.
                         AnimatedSwitcher(
                           duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 200),
                           transitionBuilder: (child, animation) => FadeTransition(
@@ -3659,11 +3334,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           final allowanceText = allowanceController.text.trim();
                           final newAllowance = allowanceText.isEmpty ? null : double.tryParse(allowanceText);
                           if (newTitle.isNotEmpty && newTarget >= 0) {
-                            // (11) BUGFIX: если новая цена меньше уже
-                            // накопленной суммы, _updateGoal вернёт false и
-                            // сама покажет предупреждение — модалку
-                            // редактирования в этом случае не закрываем,
-                            // чтобы пользователь мог исправить значение.
                             final success = await _updateGoal(
                               newTitle,
                               newTarget,
@@ -3680,8 +3350,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         child: const Text('Сохранить', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                       ),
                     ),
-                    // (2) Первую/вторую цель можно только сбросить (слот
-                    // остаётся), третью и последующие — удалить полностью.
                     const SizedBox(height: 12),
                     Builder(builder: (context) {
                       final bool resetOnly = _isResetOnlyGoal(currentGoalIndex);
@@ -3695,14 +3363,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                           ),
                           onPressed: () {
-                            // (6) Подтверждение удаления/сброса цели теперь
-                            // оформлено в едином стиле с остальными
-                            // всплывающими окнами приложения (как у
-                            // подтверждения удаления пожертвования): та же
-                            // крупная иконка сверху, заголовок, подпись и
-                            // пара кнопок в ряд — вместо системного
-                            // AlertDialog, который выглядел иначе, чем всё
-                            // остальное в приложении.
                             _showAppModal(
                               context: context,
                               builder: (dialogContext) {
@@ -3916,8 +3576,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             side: BorderSide(color: appState.primaryColor, width: 2),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                           ),
-                          // Специально ничего не делает при нажатии — кнопка
-                          // "для вида", а не для реального выбора.
                           onPressed: () {},
                           child: Text(
                             'Нет',
@@ -3928,7 +3586,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
-                // (2) Кнопка "назад" в левом верхнем углу
                 Positioned(
                   top: 4,
                   left: 4,
@@ -3957,6 +3614,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     return Scaffold(
       appBar: AppBar(
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
         title: GestureDetector(
           onTap: _handleNameTap,
           behavior: HitTestBehavior.opaque,
@@ -3990,18 +3649,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Свайпаемый блок целей + последний слайд — добавление новой цели
             SizedBox(
               height: 280,
               child: PageView.builder(
                 controller: _pageController,
-                // (3) Слайд «Добавить цель» показываем только пока не
-                // достигнут лимит в _maxGoals целей.
+                physics: kAnimationsDisabled ? const _InstantPageScrollPhysics() : const PageScrollPhysics(),
                 itemCount: goals.length + (_canAddMoreGoals ? 1 : 0),
                 onPageChanged: (index) {
-                  // (6) Вибро-отклик при смене цели — и при свайпе, и при
-                  // переключении тапом по точке (см. ниже), так как оба
-                  // способа приводят сюда же.
                   HapticFeedback.selectionClick();
                   setState(() {
                     currentGoalIndex = index;
@@ -4010,7 +3664,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 },
                 itemBuilder: (context, index) {
                   if (index == goals.length) {
-                    // Слайд с кнопкой добавления новой цели
                     return Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 4.0),
                       child: Container(
@@ -4081,7 +3734,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                       child: Stack(
                                         fit: StackFit.expand,
                                         children: [
-                                          // Размытая увеличенная копия фото — заполняет весь блок
                                           Image.file(
                                             File(goal.imagePath!),
                                             fit: BoxFit.cover,
@@ -4092,7 +3744,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                               color: Colors.black.withOpacity(0.12),
                                             ),
                                           ),
-                                          // Чёткое фото поверх, без обрезки
                                           Center(
                                             child: Image.file(
                                               File(goal.imagePath!),
@@ -4140,11 +3791,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ),
             const SizedBox(height: 10),
-            // (4)/(6) Индикатор точек для свайпа целей (включая слайд
-            // добавления) — теперь ещё и кликабелен (тап по точке сразу
-            // переключает на неё), а сама смена ширины/цвета анимирована
-            // (AnimatedContainer), из-за чего активная точка визуально
-            // "перетекает" в соседнюю, а не переключается скачком.
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: List.generate(goals.length + (_canAddMoreGoals ? 1 : 0), (index) {
@@ -4159,8 +3805,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     );
                   },
                   child: Padding(
-                    // Увеличенная зона нажатия вокруг маленькой точки —
-                    // сам визуальный размер точки не меняется.
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     child: AnimatedContainer(
                       duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 250),
@@ -4179,26 +3823,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 16),
 
-            // (1) Плавный переход между экраном цели и слайдом «Добавить
-            // цель»: AnimatedSize анимирует изменение высоты блока, а
-            // _SequentialFadeSwitcher — последовательно (сначала уход,
-            // потом появление) меняет содержимое, поэтому нижние пункты
-            // (карточки поддержки и т.д.) не «прыгают» резко, а плавно
-            // сдвигаются на новое место.
             AnimatedSize(
-              // (2) Общая длительность блока подстроена под последовательную
-              // анимацию ниже (уход + появление), чтобы высота менялась
-              // плавно на всём протяжении обеих фаз, а не только части.
               duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 460),
               curve: Curves.easeInOut,
               alignment: Alignment.topCenter,
               child: _SequentialFadeSwitcher(
-                // (2) Сначала полностью доигрывается уход старого
-                // содержимого (кнопки «Пополнить»/«Потратил» и т.д.), и
-                // только после этого, уже на пустом месте, начинает
-                // появляться новое (подсказка «Нажмите «+»...») — раньше оба
-                // происходили одновременно (crossfade), и текст успевал
-                // проступить поверх ещё не ушедших кнопок.
                 outDuration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 200),
                 inDuration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 260),
                 child: !onAddSlide
@@ -4209,24 +3838,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         children: [
               Row(
                 children: [
-                  // (9) Кнопка "Изменить" перемещена в начало ряда, вплотную
-                  // к кнопке "Пополнить" — раньше была в конце, после
-                  // "Потратил". Ширина "Пополнить"/"Потратил" не менялась.
-                  GestureDetector(
-                    onTap: _showEditGoalModal,
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: appState.primaryColor,
-                        // (10) Круглая кнопка заменена на квадратную со
-                        // скруглёнными углами.
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: const Icon(Icons.edit_outlined, color: Colors.white, size: 20),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
                   Expanded(
                     flex: 3,
                     child: SizedBox(
@@ -4235,15 +3846,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: appState.primaryColor,
                           foregroundColor: Colors.white,
-                          // (2) Убрана тень под кнопкой "Пополнить".
                           elevation: 0,
                           shadowColor: Colors.transparent,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                         ),
                         onPressed: () => _showTransactionBottomSheet(true),
-                        // (1) Убран значок "+", надпись теперь по центру
-                        // кнопки (как и было бы по умолчанию у ElevatedButton
-                        // без иконки, но явно фиксируем через Center).
                         child: const Center(
                           child: Text('Пополнить', style: TextStyle(fontWeight: FontWeight.bold)),
                         ),
@@ -4269,12 +3876,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: _showEditGoalModal,
+                    child: Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: Colors.transparent,
+                        border: Border.all(color: appState.primaryColor, width: 2),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Icon(Icons.edit_outlined, color: appState.primaryColor, size: 20),
+                    ),
+                  ),
                 ],
               ),
 
               const SizedBox(height: 12),
 
-              // Кнопки быстрого пополнения
               Row(
                 children: <int>[100, 500, 1000].map((amount) {
                   return Expanded(
@@ -4301,8 +3921,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
               const Text('История операций', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
-              // AnimatedSize — плавно меняет высоту блока и при увеличении, и
-              // при уменьшении истории (например, после свайп-удаления записи).
               AnimatedSize(
                 duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 250),
                 curve: Curves.easeInOut,
@@ -4327,11 +3945,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       : Builder(
                           builder: (context) {
                             final fullHistory = goals[currentGoalIndex].history;
-                            // (10) Ограничение истории операций теперь всегда
-                            // включено без возможности отключить в
-                            // настройках — показываем первые
-                            // _historyVisibleCount штук (по умолчанию 5), с
-                            // кнопкой "Показать ещё" под списком.
                             const limitEnabled = true;
                             final visibleCount = limitEnabled
                                 ? (_historyVisibleCount < fullHistory.length
@@ -4351,9 +3964,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   itemBuilder: (context, index) {
                                     final item = fullHistory[index];
                                     final isAdd = item.startsWith('+');
-                                    // (4) Свайп влево — удалить запись; общая
-                                    // высота блока (AnimatedSize) плавно
-                                    // уменьшится сама.
                                     return Dismissible(
                                       key: ValueKey('hist_${currentGoalIndex}_${index}_$item'),
                                       direction: DismissDirection.endToStart,
@@ -4373,16 +3983,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                           Text(
                                             item,
                                             style: TextStyle(
-                                              // (2) Раньше плюс всегда был
-                                              // чистым Colors.green, из-за
-                                              // чего в тёмной теме он
-                                              // выглядел слишком тускло/не
-                                              // сочетался с остальной
-                                              // палитрой. Тон зелёного
-                                              // теперь подстроен под тему.
                                               color: isAdd
                                                   ? (isDark ? const Color(0xFF66E08A) : const Color(0xFF2E9E4F))
-                                                  : Colors.red,
+                                                  : (isDark ? const Color(0xFFEF7A73) : const Color(0xFFD32F2F)),
                                               fontWeight: FontWeight.bold,
                                             ),
                                           ),
@@ -4428,18 +4031,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // (4) Раньше отступ до надписи был 32px — теперь
-                          // подсказка расположена сразу под точками-
-                          // индикаторами (там уже есть свой отступ 16px
-                          // после Row с точками), поэтому здесь оставляем
-                          // только небольшой зазор.
                           const SizedBox(height: 4),
                           Center(
-                            // (4) У самой надписи — собственное плавное
-                            // появление (fade + лёгкий подъём снизу вверх),
-                            // которое проигрывается один раз при появлении
-                            // слайда, поверх общего fade+slide всего блока —
-                            // получается более "живой", многослойный эффект.
                             child: TweenAnimationBuilder<double>(
                               tween: Tween(begin: 0.0, end: 1.0),
                               duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 420),
@@ -4463,7 +4056,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ),
 
-            // Карточка «Поддержать проект»
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -4504,8 +4096,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
             const SizedBox(height: 16),
 
-            // Карточка «Наш телеграм канал» — теперь кнопка реально отправляет
-            // сообщение разработчику; недоступна на устройстве самого разработчика.
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
@@ -4548,7 +4138,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
             const SizedBox(height: 24),
 
-            // Строка с версией приложения в самом низу — 5 тапов открывают пасхалку
             Center(
               child: GestureDetector(
                 onTap: _handleVersionTap,
