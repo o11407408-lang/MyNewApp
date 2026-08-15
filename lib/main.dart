@@ -1052,7 +1052,19 @@ class _InstantPageScrollPhysics extends PageScrollPhysics {
   }
 
   @override
-  SpringDescription get spring => const SpringDescription(mass: 0.01, stiffness: 1000, damping: 100);
+  Simulation? createBallisticSimulation(ScrollMetrics position, double velocity) {
+    final Simulation? parentSimulation = super.createBallisticSimulation(position, velocity);
+    if (parentSimulation == null) return null;
+    if (position is ScrollPosition) {
+      final double target = parentSimulation.x(1000);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (position.hasPixels) {
+          position.jumpTo(target);
+        }
+      });
+    }
+    return null;
+  }
 }
 
 class _SequentialFadeSwitcher extends StatefulWidget {
@@ -2709,7 +2721,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _showSettingsModal() async {
     final settingsScrollController = ScrollController();
-    bool showBottomFade = true;
     if (!mounted) return;
     _showAppModal(
       context: context,
@@ -2728,24 +2739,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 constraints: BoxConstraints(
                   maxHeight: MediaQuery.of(context).size.height * 0.75,
                 ),
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: (notification) {
-                    final metrics = notification.metrics;
-                    final atBottom = metrics.maxScrollExtent <= 0 ||
-                        metrics.pixels >= metrics.maxScrollExtent - 2;
-                    if (atBottom == showBottomFade) {
-                      setModalState(() => showBottomFade = !atBottom);
-                    }
-                    return false;
-                  },
-                child: Stack(
-                  children: [
-                    SingleChildScrollView(
-                      controller: settingsScrollController,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+                child: SingleChildScrollView(
+                  controller: settingsScrollController,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                     const Text('Настройки', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 20),
                     Row(
@@ -3001,30 +3000,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     const SizedBox(height: 4),
                     ],
                   ),
-                ),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      height: 8,
-                      child: IgnorePointer(
-                        child: AnimatedOpacity(
-                          duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 150),
-                          opacity: showBottomFade ? 1.0 : 0.0,
-                          child: Container(
-                            decoration: const BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [Colors.transparent, Colors.black12],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
                 ),
               ),
             );
@@ -3283,12 +3258,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   Expanded(
                                     child: AnimatedSwitcher(
                                       duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 200),
+                                      alignment: Alignment.centerLeft,
                                       transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
                                       child: Text(
                                         selectedTargetDate != null
                                             ? '${selectedTargetDate!.day.toString().padLeft(2, '0')}.${selectedTargetDate!.month.toString().padLeft(2, '0')}.${selectedTargetDate!.year}'
                                             : 'Не выбрана',
                                         key: ValueKey(selectedTargetDate),
+                                        textAlign: TextAlign.left,
                                         style: TextStyle(color: appState.primaryColor, fontWeight: FontWeight.bold, fontSize: 13),
                                       ),
                                     ),
@@ -3983,9 +3960,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                           Text(
                                             item,
                                             style: TextStyle(
-                                              color: isAdd
-                                                  ? (isDark ? const Color(0xFF66E08A) : const Color(0xFF2E9E4F))
-                                                  : (isDark ? const Color(0xFFEF7A73) : const Color(0xFFD32F2F)),
+                                              color: appState.primaryColor,
                                               fontWeight: FontWeight.bold,
                                             ),
                                           ),
@@ -4159,3 +4134,4 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 }
+              
