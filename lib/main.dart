@@ -1053,10 +1053,20 @@ class _InstantPageScrollPhysics extends PageScrollPhysics {
 
   @override
   Simulation? createBallisticSimulation(ScrollMetrics position, double velocity) {
-    final Simulation? parentSimulation = super.createBallisticSimulation(position, velocity);
-    if (parentSimulation == null) return null;
-    if (position is ScrollPosition) {
-      final double target = parentSimulation.x(1000);
+    if (position is! ScrollPosition || position.viewportDimension <= 0) {
+      return super.createBallisticSimulation(position, velocity);
+    }
+    final double page = position.pixels / position.viewportDimension;
+    int targetPage;
+    if (velocity.abs() >= tolerance.velocity) {
+      targetPage = velocity > 0 ? page.ceil() : page.floor();
+    } else {
+      targetPage = page.round();
+    }
+    final int maxPage = (position.maxScrollExtent / position.viewportDimension).round();
+    targetPage = targetPage.clamp(0, maxPage);
+    final double target = targetPage * position.viewportDimension;
+    if ((target - position.pixels).abs() > 0.01) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (position.hasPixels) {
           position.jumpTo(target);
@@ -1604,15 +1614,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 12),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: appState.primaryColor.withOpacity(0.08),
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: const Text(
-                            'Ты молодец!',
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                        GestureDetector(
+                          onTap: () {
+                            _showDeleteGoalConfirmation(
+                              currentGoalIndex,
+                              onConfirmed: () {
+                                if (context.mounted) Navigator.pop(context);
+                              },
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: appState.primaryColor.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Text(
+                              _isResetOnlyGoal(currentGoalIndex) ? 'Сбросить цель?' : 'Удалить цель?',
+                              style: TextStyle(fontSize: 12, color: appState.primaryColor, fontWeight: FontWeight.w600),
+                            ),
                           ),
                         ),
                         const Spacer(),
@@ -1626,7 +1646,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                             ),
                             onPressed: () => Navigator.pop(context),
-                            child: const Text('Ура!', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                            child: const Text('Спасибо!', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                           ),
                         ),
                       ],
@@ -1673,6 +1693,83 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   bool _isResetOnlyGoal(int index) => index < 2;
+
+  void _showDeleteGoalConfirmation(int index, {VoidCallback? onConfirmed}) {
+    final bool resetOnly = _isResetOnlyGoal(index);
+    _showAppModal(
+      context: context,
+      builder: (dialogContext) {
+        final dialogAppState = MyApp.of(dialogContext)!;
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                resetOnly ? Icons.restart_alt_rounded : Icons.delete_outline,
+                size: 48,
+                color: Colors.red,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                resetOnly ? 'Сбросить цель?' : 'Удалить цель?',
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                resetOnly
+                    ? 'Название, сумма и фото сбросятся к стандартным. Если цель была достигнута, она сохранится в «Истории желаний».'
+                    : 'Цель будет полностью удалена из списка. Если она была достигнута, она сохранится в «Истории желаний».',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: dialogAppState.primaryColor,
+                          side: BorderSide(color: dialogAppState.primaryColor),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: const Text('Отмена', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: SizedBox(
+                      height: 48,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () async {
+                          Navigator.pop(dialogContext);
+                          await _deleteGoal(index);
+                          onConfirmed?.call();
+                        },
+                        child: Text(
+                          resetOnly ? 'Сбросить' : 'Удалить',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   Future<void> _removeGoalPrefsAt(SharedPreferences prefs, int index) async {
     await prefs.remove('current_amount_$index');
@@ -3231,27 +3328,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     Row(
                       children: [
                         Expanded(
-                          child: GestureDetector(
-                            onTap: () async {
-                              final pickedDate = await showDatePicker(
-                                context: context,
-                                initialDate: selectedTargetDate ?? DateTime.now().add(const Duration(days: 30)),
-                                firstDate: DateTime.now(),
-                                lastDate: DateTime(DateTime.now().year + 50),
-                              );
-                              if (pickedDate == null) return;
-                              setModalState(() {
-                                selectedTargetDate = DateTime(pickedDate.year, pickedDate.month, pickedDate.day);
-                              });
-                            },
-                            child: Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                              decoration: BoxDecoration(
-                                color: appState.primaryColor.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Row(
+                          child: Material(
+                            color: appState.primaryColor.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(16),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () async {
+                                final pickedDate = await showDatePicker(
+                                  context: context,
+                                  initialDate: selectedTargetDate ?? DateTime.now().add(const Duration(days: 30)),
+                                  firstDate: DateTime.now(),
+                                  lastDate: DateTime(DateTime.now().year + 50),
+                                );
+                                if (pickedDate == null) return;
+                                setModalState(() {
+                                  selectedTargetDate = DateTime(pickedDate.year, pickedDate.month, pickedDate.day);
+                                });
+                              },
+                              child: Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                child: Row(
                                 children: [
                                   Icon(Icons.event_outlined, size: 18, color: appState.primaryColor),
                                   const SizedBox(width: 10),
@@ -3277,6 +3374,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                     ),
                                   ),
                                 ],
+                              ),
                               ),
                             ),
                           ),
@@ -3346,77 +3444,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                           ),
                           onPressed: () {
-                            _showAppModal(
-                              context: context,
-                              builder: (dialogContext) {
-                                final dialogAppState = MyApp.of(dialogContext)!;
-                                return Padding(
-                                  padding: const EdgeInsets.all(24.0),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        resetOnly ? Icons.restart_alt_rounded : Icons.delete_outline,
-                                        size: 48,
-                                        color: Colors.red,
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Text(
-                                        resetOnly ? 'Сбросить цель?' : 'Удалить цель?',
-                                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        resetOnly
-                                            ? 'Название, сумма и фото сбросятся к стандартным. Если цель была достигнута, она сохранится в «Истории желаний».'
-                                            : 'Цель будет полностью удалена из списка. Если она была достигнута, она сохранится в «Истории желаний».',
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(fontSize: 14, color: Colors.grey),
-                                      ),
-                                      const SizedBox(height: 20),
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: SizedBox(
-                                              height: 48,
-                                              child: OutlinedButton(
-                                                style: OutlinedButton.styleFrom(
-                                                  foregroundColor: dialogAppState.primaryColor,
-                                                  side: BorderSide(color: dialogAppState.primaryColor),
-                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                                ),
-                                                onPressed: () => Navigator.pop(dialogContext),
-                                                child: const Text('Отмена', style: TextStyle(fontWeight: FontWeight.bold)),
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: SizedBox(
-                                              height: 48,
-                                              child: ElevatedButton(
-                                                style: ElevatedButton.styleFrom(
-                                                  backgroundColor: Colors.red,
-                                                  foregroundColor: Colors.white,
-                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                                ),
-                                                onPressed: () {
-                                                  Navigator.pop(dialogContext);
-                                                  Navigator.pop(context);
-                                                  _deleteGoal(currentGoalIndex);
-                                                },
-                                                child: Text(
-                                                  resetOnly ? 'Сбросить' : 'Удалить',
-                                                  style: const TextStyle(fontWeight: FontWeight.bold),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                );
+                            _showDeleteGoalConfirmation(
+                              currentGoalIndex,
+                              onConfirmed: () {
+                                if (context.mounted) Navigator.pop(context);
                               },
                             );
                           },
@@ -3860,17 +3891,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: _showEditGoalModal,
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: Colors.transparent,
-                        border: Border.all(color: appState.primaryColor, width: 2),
-                        borderRadius: BorderRadius.circular(16),
+                  Material(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(16),
+                    child: InkWell(
+                      onTap: _showEditGoalModal,
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          border: Border.all(color: appState.primaryColor, width: 2),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Icon(Icons.edit_outlined, color: appState.primaryColor, size: 20),
                       ),
-                      child: Icon(Icons.edit_outlined, color: appState.primaryColor, size: 20),
                     ),
                   ),
                 ],
