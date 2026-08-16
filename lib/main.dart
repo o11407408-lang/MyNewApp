@@ -1043,40 +1043,6 @@ String? estimateRemainingToGoal(GoalData goal) {
   return formatRemainingDuration(now, target);
 }
 
-class _InstantPageScrollPhysics extends PageScrollPhysics {
-  const _InstantPageScrollPhysics({super.parent});
-
-  @override
-  _InstantPageScrollPhysics applyTo(ScrollPhysics? ancestor) {
-    return _InstantPageScrollPhysics(parent: buildParent(ancestor));
-  }
-
-  @override
-  Simulation? createBallisticSimulation(ScrollMetrics position, double velocity) {
-    if (position is! ScrollPosition || position.viewportDimension <= 0) {
-      return super.createBallisticSimulation(position, velocity);
-    }
-    final double page = position.pixels / position.viewportDimension;
-    int targetPage;
-    if (velocity.abs() >= tolerance.velocity) {
-      targetPage = velocity > 0 ? page.ceil() : page.floor();
-    } else {
-      targetPage = page.round();
-    }
-    final int maxPage = (position.maxScrollExtent / position.viewportDimension).round();
-    targetPage = targetPage.clamp(0, maxPage);
-    final double target = targetPage * position.viewportDimension;
-    if ((target - position.pixels).abs() > 0.01) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (position.hasPixels) {
-          position.jumpTo(target);
-        }
-      });
-    }
-    return null;
-  }
-}
-
 class _SequentialFadeSwitcher extends StatefulWidget {
   final Widget child;
   final Duration outDuration;
@@ -2693,7 +2659,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           }
                           return const Center(child: Text('Сообщений пока нет', style: TextStyle(color: Colors.grey)));
                         },
-                      );
+                  );
                     }
                     return ListView.separated(
                       itemCount: docs.length,
@@ -3379,23 +3345,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ),
                           ),
                         ),
-                        AnimatedSwitcher(
-                          duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 200),
-                          transitionBuilder: (child, animation) => FadeTransition(
-                            opacity: animation,
-                            child: ScaleTransition(scale: animation, child: child),
-                          ),
-                          child: selectedTargetDate != null
-                              ? Padding(
-                                  key: const ValueKey('clear_target_date_btn'),
-                                  padding: const EdgeInsets.only(left: 8),
-                                  child: IconButton(
+                        SizedBox(
+                          // (BUGFIX) Раньше исчезающий вариант — это
+                          // SizedBox.shrink() (нулевой ширины), из-за чего
+                          // AnimatedSwitcher мгновенно схлопывал место под
+                          // кнопку ещё до того, как затухание успевало
+                          // доиграть — выглядело как "пропадает без
+                          // анимации". Теперь ширина зарезервирована заранее
+                          // (48px, как у IconButton), меняется только
+                          // прозрачность/масштаб самой иконки, без скачков
+                          // раскладки.
+                          width: 48,
+                          height: 48,
+                          child: AnimatedSwitcher(
+                            duration: kAnimationsDisabled ? Duration.zero : const Duration(milliseconds: 200),
+                            transitionBuilder: (child, animation) => FadeTransition(
+                              opacity: animation,
+                              child: ScaleTransition(scale: animation, child: child),
+                            ),
+                            child: selectedTargetDate != null
+                                ? IconButton(
+                                    key: const ValueKey('clear_target_date_btn'),
                                     onPressed: () => setModalState(() => selectedTargetDate = null),
                                     icon: const Icon(Icons.close_rounded),
                                     color: Colors.grey,
-                                  ),
-                                )
-                              : const SizedBox.shrink(key: ValueKey('clear_target_date_btn_empty')),
+                                  )
+                                : const SizedBox.shrink(key: ValueKey('clear_target_date_btn_empty')),
+                          ),
                         ),
                       ],
                     ),
@@ -3665,11 +3641,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           children: [
             SizedBox(
               height: 280,
-              child: PageView.builder(
-                controller: _pageController,
-                physics: kAnimationsDisabled ? const _InstantPageScrollPhysics() : const PageScrollPhysics(),
-                itemCount: goals.length + (_canAddMoreGoals ? 1 : 0),
-                onPageChanged: (index) {
+              // (BUGFIX) При отключённых анимациях свайп между целями
+              // теперь не использует физику скролла вообще (никакого
+              // "долёта" или следования за пальцем с инерцией) — вместо
+              // этого свайп только определяет направление и мгновенно
+              // переключает на соседнюю карточку через jumpToPage.
+              child: GestureDetector(
+                onHorizontalDragEnd: kAnimationsDisabled
+                    ? (details) {
+                        final double velocity = details.primaryVelocity ?? 0;
+                        final int maxIndex = goals.length + (_canAddMoreGoals ? 1 : 0) - 1;
+                        if (velocity < -200 && currentGoalIndex < maxIndex) {
+                          _pageController.jumpToPage(currentGoalIndex + 1);
+                        } else if (velocity > 200 && currentGoalIndex > 0) {
+                          _pageController.jumpToPage(currentGoalIndex - 1);
+                        }
+                      }
+                    : null,
+                child: PageView.builder(
+                  controller: _pageController,
+                  physics: kAnimationsDisabled ? const NeverScrollableScrollPhysics() : const PageScrollPhysics(),
+                  itemCount: goals.length + (_canAddMoreGoals ? 1 : 0),
+                  onPageChanged: (index) {
                   HapticFeedback.selectionClick();
                   setState(() {
                     currentGoalIndex = index;
@@ -3752,12 +3745,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                             File(goal.imagePath!),
                                             fit: BoxFit.cover,
                                           ),
-                                          BackdropFilter(
-                                            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                                            child: Container(
-                                              color: Colors.black.withOpacity(0.12),
-                                            ),
-                                          ),
+                                          Container(color: Colors.black.withOpacity(0.12)),
                                           Center(
                                             child: Image.file(
                                               File(goal.imagePath!),
@@ -3802,6 +3790,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   );
                 },
+              ),
               ),
             ),
             const SizedBox(height: 10),
