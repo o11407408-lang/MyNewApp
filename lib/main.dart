@@ -1532,12 +1532,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _shareApp() {
-    // TODO: замени ссылку на реальную ссылку на google диск с apk
     const shareText =
         'Привет! \n'
-        'Я пользуюсь приложением Я коплю: мечты. \n'
+        'Я пользуюсь приложением \n'
+        'Я коплю: мечты. \n'
         'Присоединяйся - оно полностью бесплатное.\n'
-        'https://drive.google.com/YOUR_APK_LINK_HERE';
+        'Google drive: https://drive.google.com/drive/folders/103Wy2OGXGD4ZOZUEf7BMivujVsqfGlTe\n'
+        'RuStore: https://www.rustore.ru/catalog/app/com.yakopluymaratkrutoi.app';
     Share.share(shareText);
   }
 
@@ -2659,7 +2660,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           }
                           return const Center(child: Text('Сообщений пока нет', style: TextStyle(color: Colors.grey)));
                         },
-                  );
+                      );
                     }
                     return ListView.separated(
                       itemCount: docs.length,
@@ -3756,20 +3757,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                             File(goal.imagePath!),
                                             fit: BoxFit.cover,
                                           ),
-                                          // При отключённых анимациях (режим
-                                          // максимальной скорости) блюр не
-                                          // рисуется — он самая дорогая часть
-                                          // этого места по GPU, а обычный
-                                          // затемняющий слой почти не влияет
-                                          // на производительность. В обычном
-                                          // режиме — полноценный блюр, как
-                                          // было изначально.
-                                          kAnimationsDisabled
-                                              ? Container(color: Colors.black.withOpacity(0.12))
-                                              : BackdropFilter(
-                                                  filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                                                  child: Container(color: Colors.black.withOpacity(0.12)),
-                                                ),
+                                          BackdropFilter(
+                                            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                                            child: Container(color: Colors.black.withOpacity(0.12)),
+                                          ),
                                           Center(
                                             child: Image.file(
                                               File(goal.imagePath!),
