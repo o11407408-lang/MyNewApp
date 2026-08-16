@@ -3300,6 +3300,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             child: InkWell(
                               borderRadius: BorderRadius.circular(16),
                               onTap: () async {
+                                // (BUGFIX) Раньше showDatePicker открывался
+                                // сразу по нажатию, обрывая Material-ripple
+                                // на середине (диалог перекрывал экран
+                                // прежде, чем волна анимации успевала
+                                // доиграть до края) — выглядело так, будто
+                                // анимации нет вовсе. Небольшая пауза даёт
+                                // ripple время визуально завершиться.
+                                if (!kAnimationsDisabled) {
+                                  await Future.delayed(const Duration(milliseconds: 150));
+                                }
+                                if (!context.mounted) return;
                                 final pickedDate = await showDatePicker(
                                   context: context,
                                   initialDate: selectedTargetDate ?? DateTime.now().add(const Duration(days: 30)),
@@ -3745,7 +3756,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                             File(goal.imagePath!),
                                             fit: BoxFit.cover,
                                           ),
-                                          Container(color: Colors.black.withOpacity(0.12)),
+                                          // При отключённых анимациях (режим
+                                          // максимальной скорости) блюр не
+                                          // рисуется — он самая дорогая часть
+                                          // этого места по GPU, а обычный
+                                          // затемняющий слой почти не влияет
+                                          // на производительность. В обычном
+                                          // режиме — полноценный блюр, как
+                                          // было изначально.
+                                          kAnimationsDisabled
+                                              ? Container(color: Colors.black.withOpacity(0.12))
+                                              : BackdropFilter(
+                                                  filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                                                  child: Container(color: Colors.black.withOpacity(0.12)),
+                                                ),
                                           Center(
                                             child: Image.file(
                                               File(goal.imagePath!),
@@ -3884,7 +3908,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     color: Colors.transparent,
                     borderRadius: BorderRadius.circular(16),
                     child: InkWell(
-                      onTap: _showEditGoalModal,
+                      onTap: () async {
+                        // (BUGFIX) Та же причина, что и с полем даты — модалка
+                        // открывалась мгновенно, обрывая ripple на середине.
+                        if (!kAnimationsDisabled) {
+                          await Future.delayed(const Duration(milliseconds: 150));
+                        }
+                        if (!mounted) return;
+                        _showEditGoalModal();
+                      },
                       borderRadius: BorderRadius.circular(16),
                       child: Container(
                         width: 48,
