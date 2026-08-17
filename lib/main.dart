@@ -1577,7 +1577,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         'Я пользуюсь приложением \n'
         'Я коплю: мечты. \n'
         'Присоединяйся - оно полностью бесплатное.\n'
+        '\n'
         'Google drive: https://drive.google.com/drive/folders/103Wy2OGXGD4ZOZUEf7BMivujVsqfGlTe\n'
+        '\n'
         'RuStore: https://www.rustore.ru/catalog/app/com.yakopluymaratkrutoi.app';
     Share.share(shareText);
   }
