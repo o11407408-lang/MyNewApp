@@ -553,23 +553,7 @@ class _MyAppState extends State<MyApp> {
         useMaterial3: true,
       ),
       home: isRegistered
-          // (BUGFIX) Сразу после регистрации/сброса настроек смена темы
-          // иногда не долетала до части экрана — виджет HomeScreen кое-где
-          // оставался с прежними цветами. Причина этой гонки состояний не
-          // локализуется однозначно статическим чтением кода (проявляется
-          // только в рантайме на конкретной последовательности действий),
-          // поэтому самый надёжный способ её исключить — привязать ключ
-          // HomeScreen к текущей теме (цвет + тёмный режим). Flutter в этом
-          // случае гарантированно пересоздаёт экран с нуля при каждой смене
-          // темы, вместо попытки переиспользовать старый экземпляр
-          // состояния. Плата за это — сброс прокрутки/текущей выбранной
-          // цели на первом экране при переключении темы, что в данном
-          // случае вполне приемлемо (тема меняется редко и осознанно).
-          ? HomeScreen(
-              key: ValueKey('home_${selectedColorIndex}_$isDark'),
-              userName: userName,
-              userLastName: userLastName,
-            )
+          ? HomeScreen(userName: userName, userLastName: userLastName)
           : const OnboardingScreen(),
     );
   }
@@ -789,30 +773,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       ),
                     )
                   ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              // Переключатель тёмной темы прямо на регистрации — оформлен в
-              // том же стиле Material You, что и в настройках (SwitchListTile
-              // с primaryColor выбранного акцента), чтобы вписываться в общий
-              // визуальный язык приложения.
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                decoration: BoxDecoration(
-                  color: appState.primaryColor.withOpacity(0.06),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: SwitchListTile(
-                  title: const Text('Тёмная тема', style: TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: const Text(
-                    'Можно изменить позже в настройках',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                  activeColor: appState.primaryColor,
-                  value: isDark,
-                  onChanged: (value) {
-                    appState.toggleTheme(value);
-                  },
                 ),
               ),
               const SizedBox(height: 20),
@@ -1577,9 +1537,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         'Я пользуюсь приложением \n'
         'Я коплю: мечты. \n'
         'Присоединяйся - оно полностью бесплатное.\n'
-        '\n'
         'Google drive: https://drive.google.com/drive/folders/103Wy2OGXGD4ZOZUEf7BMivujVsqfGlTe\n'
-        '\n'
         'RuStore: https://www.rustore.ru/catalog/app/com.yakopluymaratkrutoi.app';
     Share.share(shareText);
   }
